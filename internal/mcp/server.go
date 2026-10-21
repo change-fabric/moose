@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -25,7 +26,7 @@ const (
 	ToolListSources = "list_sources"
 	ToolSearch      = "search"
 	ToolGetDocument = "get_document"
-	defaultSource   = "gdrive"
+	defaultSource   = gdrive.ID
 )
 
 // SourceOut is one entry of the list_sources output.
@@ -66,7 +67,7 @@ func ptr[T any](v T) *T { return &v }
 func sourceSchema(withDefault bool) *jsonschema.Schema {
 	s := &jsonschema.Schema{Type: "string", Enum: []any{defaultSource}}
 	if withDefault {
-		s.Default = json.RawMessage(`"gdrive"`)
+		s.Default = json.RawMessage(strconv.Quote(defaultSource))
 	}
 	return s
 }

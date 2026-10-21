@@ -29,8 +29,9 @@ test-store:
 	MOOSE_DYNAMO_ENDPOINT=http://localhost:$(DDB_PORT) $(GO) test -count=1 ./internal/store/... ; \
 	rc=$$?; docker stop moose-ddb-test >/dev/null; exit $$rc
 
+# modernc.org/mathutil is BSD-3-Clause, but its LICENSE wording defeats the go-licenses classifier.
 license-check:
-	$(GO) run github.com/google/go-licenses@v1.6.0 check ./... --allowed_licenses=$(ALLOWED_LICENSES)
+	$(GO) run github.com/google/go-licenses@v1.6.0 check ./... --allowed_licenses=$(ALLOWED_LICENSES) --ignore modernc.org/mathutil
 
 clean:
 	rm -rf dist
