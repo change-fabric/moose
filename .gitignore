@@ -6,3 +6,9 @@
 !.env.example
 *.json.key
 bin/
+dist/
+deploy/compose/.env
+deploy/compose/secrets/
+*.tfstate*
+*.tfvars
+!*.tfvars.example

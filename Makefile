@@ -1,0 +1,27 @@
+# Go is never installed on the host: $(GO) defaults to a wrapper that runs the
+# official golang image. CI overrides it with GO=go.
+GO ?= ./scripts/go
+VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+LDFLAGS := -s -w -X main.version=$(VERSION)
+GOLANGCI_IMAGE ?= golangci/golangci-lint:v2.15.0
+ALLOWED_LICENSES := MIT,BSD-2-Clause,BSD-3-Clause,Apache-2.0,ISC,MPL-2.0
+
+.PHONY: build test vet lint license-check clean
+
+build:
+	CGO_ENABLED=0 $(GO) build -trimpath -ldflags "$(LDFLAGS)" -o dist/ ./cmd/...
+
+test:
+	$(GO) test ./...
+
+vet:
+	$(GO) vet ./...
+
+lint:
+	docker run --rm -v "$(CURDIR)":/app -w /app $(GOLANGCI_IMAGE) golangci-lint run
+
+license-check:
+	$(GO) run github.com/google/go-licenses@v1.6.0 check ./... --allowed_licenses=$(ALLOWED_LICENSES)
+
+clean:
+	rm -rf dist

@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+# Run the Go toolchain inside the official golang image. Go is never installed on the host.
+set -euo pipefail
+
+GO_IMAGE="${MOOSE_GO_IMAGE:-golang:1.27.3}"
+repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+env_args=()
+for v in GOOS GOARCH CGO_ENABLED GOFLAGS; do
+  if [[ -n "${!v:-}" ]]; then env_args+=(-e "$v=${!v}"); fi
+done
+while IFS= read -r v; do
+  env_args+=(-e "$v=${!v}")
+done < <(compgen -e | grep '^MOOSE_' || true)
+
+tty_args=()
+if [[ -t 0 && -t 1 ]]; then tty_args=(-it); fi
+
+exec docker run --rm ${tty_args[@]+"${tty_args[@]}"} \
+  -v "$repo:/src" \
+  -v moose-gomod:/go/pkg/mod \
+  -v moose-gobuild:/root/.cache/go-build \
+  -w /src \
+  --network host \
+  ${env_args[@]+"${env_args[@]}"} \
+  "$GO_IMAGE" go "$@"
