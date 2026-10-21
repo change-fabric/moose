@@ -63,7 +63,8 @@ const (
 
 // HeaderIdentity trusts the identity headers that `tailscale serve` injects on
 // the relay, but only when the request also carries the relay shared secret.
-// Tagged callers get no serve headers and are rejected in v0 (plan Q2).
+// tailscale serve sends no identity headers for tagged devices, so tagged
+// callers are rejected on this path in v0.
 type HeaderIdentity struct{ Secret []byte }
 
 func (s HeaderIdentity) Identify(r *http.Request) (Identity, error) {

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/change-fabric/moose/internal/audit"
+	"github.com/change-fabric/moose/internal/core"
 	"github.com/change-fabric/moose/internal/store"
 )
 
@@ -156,7 +157,7 @@ func (a *Authenticator) Middleware(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
-		// Step 1-2: identity and allowlists.
+		// The tailnet identity must pass the login and tag allowlists first.
 		id, ok := a.identify(w, r)
 		if !ok {
 			return
@@ -177,9 +178,9 @@ func (a *Authenticator) Middleware(next http.Handler) http.Handler {
 	})
 }
 
-// authenticate runs steps 3-6 and returns the principal for step 7.
+// authenticate checks the bearer PAT against the store and the tailnet
+// identity, and returns the caller's principal.
 func (a *Authenticator) authenticate(w http.ResponseWriter, r *http.Request, id Identity) (Principal, bool) {
-	// Step 3: bearer PAT present and well formed.
 	raw, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
 	raw = strings.TrimSpace(raw)
 	if !ok || raw == "" {
@@ -191,7 +192,8 @@ func (a *Authenticator) authenticate(w http.ResponseWriter, r *http.Request, id 
 		fail(w, r, http.StatusUnauthorized, "unauthenticated", "malformed bearer token")
 		return Principal{}, false
 	}
-	// Step 4: look up and verify. One message for every failure.
+	// Unknown, bad-hash, revoked, and expired tokens share one message so the
+	// response does not reveal which check failed.
 	tok, err := a.Store.GetToken(r.Context(), tokenID)
 	switch {
 	case errors.Is(err, store.ErrNotFound):
@@ -199,15 +201,15 @@ func (a *Authenticator) authenticate(w http.ResponseWriter, r *http.Request, id 
 		return Principal{}, false
 	case err != nil:
 		a.logger().Error("auth: token lookup", "token", RedactPAT(raw), "err", err)
-		fail(w, r, http.StatusServiceUnavailable, "store_unavailable", "state store unavailable")
+		failStoreUnavailable(w, r)
 		return Principal{}, false
 	}
 	if !VerifyPAT(raw, tok.Hash) || tok.Revoked || (tok.Expires != nil && !a.now().Before(*tok.Expires)) {
 		fail(w, r, http.StatusUnauthorized, "invalid_token", "token is invalid, revoked, or expired")
 		return Principal{}, false
 	}
-	// Step 5: owner cross-check against the tailnet identity.
-	tagOwned := strings.HasPrefix(tok.Owner, "tag:")
+	// A token is only usable by the tailnet login or tag that owns it.
+	tagOwned := core.IsTag(tok.Owner)
 	if tagOwned {
 		if id.Login != "" || !slices.Contains(id.Tags, tok.Owner) {
 			fail(w, r, http.StatusForbidden, "token_owner_mismatch", "token owner does not match the calling device")
@@ -217,7 +219,7 @@ func (a *Authenticator) authenticate(w http.ResponseWriter, r *http.Request, id 
 		fail(w, r, http.StatusForbidden, "token_owner_mismatch", "token owner does not match the calling device")
 		return Principal{}, false
 	}
-	// Step 6: user exists and is enabled; tags must be allowed instead.
+	// Tag owners have no user record; the tag allowlist stands in for it.
 	p := Principal{Login: tok.Owner, TokenID: tok.ID, Identity: id}
 	if tagOwned {
 		if !a.tagAllowed(tok.Owner) {
@@ -227,21 +229,35 @@ func (a *Authenticator) authenticate(w http.ResponseWriter, r *http.Request, id 
 		p.Role = RoleMember
 		return p, true
 	}
-	u, err := a.Store.GetUser(r.Context(), tok.Owner)
-	switch {
-	case errors.Is(err, store.ErrNotFound):
-		fail(w, r, http.StatusForbidden, "user_unknown", "token owner is not a moose user")
-		return Principal{}, false
-	case err != nil:
-		a.logger().Error("auth: user lookup", "login", tok.Owner, "err", err)
-		fail(w, r, http.StatusServiceUnavailable, "store_unavailable", "state store unavailable")
-		return Principal{}, false
-	case u.Disabled:
-		fail(w, r, http.StatusForbidden, "user_disabled", "user is disabled")
+	u, ok := a.enabledUser(w, r, tok.Owner, "user_unknown", "token owner is not a moose user")
+	if !ok {
 		return Principal{}, false
 	}
 	p.Role = u.Role
 	return p, true
+}
+
+// enabledUser loads login and fails the request when the user is missing
+// (with unknownCode), disabled, or the store is down.
+func (a *Authenticator) enabledUser(w http.ResponseWriter, r *http.Request, login, unknownCode, unknownMsg string) (store.User, bool) {
+	u, err := a.Store.GetUser(r.Context(), login)
+	switch {
+	case errors.Is(err, store.ErrNotFound):
+		fail(w, r, http.StatusForbidden, unknownCode, unknownMsg)
+		return store.User{}, false
+	case err != nil:
+		a.logger().Error("auth: user lookup", "login", login, "err", err)
+		failStoreUnavailable(w, r)
+		return store.User{}, false
+	case u.Disabled:
+		fail(w, r, http.StatusForbidden, "user_disabled", "user is disabled")
+		return store.User{}, false
+	}
+	return u, true
+}
+
+func failStoreUnavailable(w http.ResponseWriter, r *http.Request) {
+	fail(w, r, http.StatusServiceUnavailable, "store_unavailable", "state store unavailable")
 }
 
 // touch records LastUsed asynchronously, at most once per touchInterval per token.
@@ -312,7 +328,7 @@ type BootstrapResponse struct {
 // Bootstrap serves POST /v1/bootstrap/token behind Middleware. It issues a
 // first PAT to an existing, enabled user who owns zero tokens; the bootstrap
 // admin is such a user after EnsureBootstrapAdmin, and members self-serve the
-// same way (plan Q7). Once the caller owns a token the route answers 410.
+// same way, once per user. Once the caller owns a token the route answers 410.
 func (a *Authenticator) Bootstrap() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		audit.FromContext(r.Context()).SetAction("token.bootstrap", "", "")
@@ -343,21 +359,12 @@ func (a *Authenticator) Bootstrap() http.Handler {
 			name = "bootstrap"
 		}
 		ctx := r.Context()
-		u, err := a.Store.GetUser(ctx, id.Login)
-		switch {
-		case errors.Is(err, store.ErrNotFound):
-			fail(w, r, http.StatusForbidden, "bootstrap_forbidden", "caller is not a moose user")
-			return
-		case err != nil:
-			fail(w, r, http.StatusServiceUnavailable, "store_unavailable", "state store unavailable")
-			return
-		case u.Disabled:
-			fail(w, r, http.StatusForbidden, "user_disabled", "user is disabled")
+		if _, ok := a.enabledUser(w, r, id.Login, "bootstrap_forbidden", "caller is not a moose user"); !ok {
 			return
 		}
 		owned, err := a.Store.ListTokens(ctx, id.Login)
 		if err != nil {
-			fail(w, r, http.StatusServiceUnavailable, "store_unavailable", "state store unavailable")
+			failStoreUnavailable(w, r)
 			return
 		}
 		if len(owned) > 0 {
@@ -370,7 +377,7 @@ func (a *Authenticator) Bootstrap() http.Handler {
 			return
 		}
 		if err := a.Store.CreateToken(ctx, tok); err != nil {
-			fail(w, r, http.StatusServiceUnavailable, "store_unavailable", "state store unavailable")
+			failStoreUnavailable(w, r)
 			return
 		}
 		audit.FromContext(ctx).SetActor(id.Login, tok.ID)

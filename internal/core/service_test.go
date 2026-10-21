@@ -3,6 +3,7 @@ package core_test
 import (
 	"context"
 	"errors"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -84,6 +85,22 @@ func TestServiceFanOutLimit(t *testing.T) {
 	res, _ := s.Search(context.Background(), core.SearchQuery{Text: "x", Limit: 2})
 	if len(res.Items) != 2 {
 		t.Fatalf("want 2, got %d", len(res.Items))
+	}
+}
+
+func TestServiceCapsLimitAtMax(t *testing.T) {
+	var docs []core.Document
+	for i := range core.MaxLimit + 50 {
+		docs = append(docs, doc(strconv.Itoa(i), "x", "", t0))
+	}
+	s, _ := core.NewService([]core.Connector{fake.New("a", docs...)}, core.Options{})
+	res, _ := s.Search(context.Background(), core.SearchQuery{Text: "x", Limit: 1000})
+	if len(res.Items) != core.MaxLimit {
+		t.Fatalf("search: want %d, got %d", core.MaxLimit, len(res.Items))
+	}
+	res, _ = s.List(context.Background(), "a", "", 1000)
+	if len(res.Items) != core.MaxLimit {
+		t.Fatalf("list: want %d, got %d", core.MaxLimit, len(res.Items))
 	}
 }
 

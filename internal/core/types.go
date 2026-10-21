@@ -1,7 +1,10 @@
 // Package core holds moose's transport-agnostic domain types and Service.
 package core
 
-import "time"
+import (
+	"strings"
+	"time"
+)
 
 // Source describes a connected data source.
 type Source struct {
@@ -52,3 +55,7 @@ type SearchResult struct {
 	Items         []DocRef `json:"items"`
 	NextPageToken string   `json:"next_page_token,omitempty"`
 }
+
+// IsTag reports whether a tailnet owner or identity names a tag ("tag:ci")
+// rather than a user login.
+func IsTag(owner string) bool { return strings.HasPrefix(owner, "tag:") }

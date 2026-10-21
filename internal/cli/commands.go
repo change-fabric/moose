@@ -18,6 +18,7 @@ import (
 
 	"github.com/change-fabric/moose/internal/api"
 	"github.com/change-fabric/moose/internal/auth"
+	"github.com/change-fabric/moose/internal/connectors/gdrive"
 	"github.com/change-fabric/moose/internal/core"
 )
 
@@ -63,6 +64,10 @@ func NewRoot(env Env) *cobra.Command {
 	return root
 }
 
+func (a *app) newClient(baseURL, token string) *Client {
+	return &Client{BaseURL: baseURL, Token: token, HTTP: a.env.HTTP, UserAgent: "moose/" + a.env.Version}
+}
+
 // client resolves the URL and token: env overrides the credential file.
 func (a *app) client() (*Client, error) {
 	creds, err := loadCredentials(a.credPath)
@@ -75,7 +80,7 @@ func (a *app) client() (*Client, error) {
 	if v := a.env.Getenv("MOOSE_PAT"); v != "" {
 		creds.Token = v
 	}
-	return &Client{BaseURL: creds.URL, Token: creds.Token, HTTP: a.env.HTTP, UserAgent: "moose/" + a.env.Version}, nil
+	return a.newClient(creds.URL, creds.Token), nil
 }
 
 func (a *app) printJSON(v any) error {
@@ -128,7 +133,7 @@ func (a *app) loginCmd() *cobra.Command {
 			if token == "" {
 				return usageErr("no token given (use --token or stdin)")
 			}
-			c := &Client{BaseURL: hub, Token: token, HTTP: a.env.HTTP, UserAgent: "moose/" + a.env.Version}
+			c := a.newClient(hub, token)
 			var who api.WhoAmI
 			if err := c.do(cmd.Context(), http.MethodGet, "/v1/whoami", nil, nil, &who); err != nil {
 				return err
@@ -294,7 +299,7 @@ func (a *app) getCmd() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&source, "source", "gdrive", "source id")
+	cmd.Flags().StringVar(&source, "source", gdrive.ID, "source id")
 	cmd.Flags().BoolVar(&asJSON, "json", false, "print JSON")
 	return cmd
 }
@@ -345,7 +350,7 @@ func (a *app) tokenCmd() *cobra.Command {
 			if bURL == "" || bName == "" {
 				return usageErr("--url and --name are required")
 			}
-			c := &Client{BaseURL: bURL, HTTP: a.env.HTTP, UserAgent: "moose/" + a.env.Version}
+			c := a.newClient(bURL, "")
 			var out auth.BootstrapResponse
 			if err := c.do(cmd.Context(), http.MethodPost, auth.BootstrapPath, nil, map[string]string{"name": bName}, &out); err != nil {
 				return err

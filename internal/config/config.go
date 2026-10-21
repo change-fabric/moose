@@ -9,9 +9,10 @@ import (
 	"io"
 	"os"
 	"regexp"
-	"strings"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/change-fabric/moose/internal/core"
 )
 
 // Environments and identity modes.
@@ -170,7 +171,7 @@ func (c Config) Validate() error {
 		}
 	}
 	for _, tag := range c.Identity.AllowedTags {
-		if !strings.HasPrefix(tag, "tag:") {
+		if !core.IsTag(tag) {
 			errs = append(errs, fmt.Errorf("identity.allowed_tags entry %q must start with tag:", tag))
 		}
 	}

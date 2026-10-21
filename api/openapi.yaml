@@ -42,7 +42,7 @@ components:
       properties:
         error:
           type: string
-          description: not_found, invalid_request, unauthenticated, invalid_token, token_owner_mismatch, forbidden, upstream_unavailable, document_too_large, bootstrap_used, internal
+          description: not_found, invalid_request, unauthenticated, invalid_token, token_owner_mismatch, identity_not_allowed, user_unknown, user_disabled, forbidden, bootstrap_forbidden, bootstrap_used, method_not_allowed, upstream_unavailable, store_unavailable, document_too_large, internal
         message: { type: string }
     Identity:
       type: object

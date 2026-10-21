@@ -168,16 +168,22 @@ func principal(w http.ResponseWriter, r *http.Request) (auth.Principal, bool) {
 	return p, ok
 }
 
-func intParam(r *http.Request, name string, def int) (int, error) {
-	v := r.URL.Query().Get(name)
+// limitParam reads the limit query parameter. Missing or zero means def, and
+// values above max are capped to max. It fails the request on a bad value.
+func limitParam(w http.ResponseWriter, r *http.Request, def, max int) (int, bool) {
+	v := r.URL.Query().Get("limit")
 	if v == "" {
-		return def, nil
+		return def, true
 	}
 	n, err := strconv.Atoi(v)
 	if err != nil || n < 0 {
-		return 0, errors.New(name + " must be a non-negative integer")
+		fail(w, r, http.StatusBadRequest, "invalid_request", "limit must be a non-negative integer")
+		return 0, false
 	}
-	return n, nil
+	if n == 0 {
+		return def, true
+	}
+	return min(n, max), true
 }
 
 func decode(w http.ResponseWriter, r *http.Request, dst any) bool {
@@ -228,9 +234,8 @@ func page(res core.SearchResult) ResultPage {
 func (a *API) search(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	setAction(r, "search", q.Get("source"), "")
-	limit, err := intParam(r, "limit", 0)
-	if err != nil {
-		fail(w, r, http.StatusBadRequest, "invalid_request", err.Error())
+	limit, ok := limitParam(w, r, core.DefaultLimit, core.MaxLimit)
+	if !ok {
 		return
 	}
 	text := q.Get("q")
@@ -253,9 +258,8 @@ func (a *API) list(w http.ResponseWriter, r *http.Request) {
 		source = gdrive.ID
 	}
 	setAction(r, "list", source, "")
-	limit, err := intParam(r, "limit", 0)
-	if err != nil {
-		fail(w, r, http.StatusBadRequest, "invalid_request", err.Error())
+	limit, ok := limitParam(w, r, core.DefaultLimit, core.MaxLimit)
+	if !ok {
 		return
 	}
 	res, err := a.d.Service.List(r.Context(), source, q.Get("page_token"), limit)
@@ -320,7 +324,7 @@ func (a *API) createToken(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	ctx := r.Context()
-	if !strings.HasPrefix(body.Owner, "tag:") {
+	if !core.IsTag(body.Owner) {
 		u, err := a.d.Store.GetUser(ctx, body.Owner)
 		if errors.Is(err, store.ErrNotFound) {
 			fail(w, r, http.StatusBadRequest, "invalid_request", "owner is not a moose user; add it first")
@@ -414,7 +418,7 @@ func (a *API) addUser(w http.ResponseWriter, r *http.Request) {
 	if body.Role == "" {
 		body.Role = auth.RoleMember
 	}
-	if body.Login == "" || strings.HasPrefix(body.Login, "tag:") {
+	if body.Login == "" || core.IsTag(body.Login) {
 		fail(w, r, http.StatusBadRequest, "invalid_request", "login is required and must be a tailnet user login")
 		return
 	}
@@ -464,15 +468,10 @@ func (a *API) listAudit(w http.ResponseWriter, r *http.Request) {
 		}
 		since = t
 	}
-	limit, err := intParam(r, "limit", defaultAuditLimit)
-	if err != nil {
-		fail(w, r, http.StatusBadRequest, "invalid_request", err.Error())
+	limit, ok := limitParam(w, r, defaultAuditLimit, maxAuditLimit)
+	if !ok {
 		return
 	}
-	if limit == 0 {
-		limit = defaultAuditLimit
-	}
-	limit = min(limit, maxAuditLimit)
 	evs, err := a.d.Store.ListAudit(r.Context(), since, limit)
 	if err != nil {
 		writeErr(w, r, err)
