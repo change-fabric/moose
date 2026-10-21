@@ -177,7 +177,7 @@ func TestEndToEnd(t *testing.T) {
 	e.want("GET", "/v1/whoami", second.Token, nil, 401, nil)
 	e.want("DELETE", "/v1/tokens/nosuchtoken", tok, nil, 404, nil)
 
-	e.want("GET", "/mcp", tok, nil, 501, nil)
+	e.want("GET", "/mcp", tok, nil, 405, nil)
 	e.want("GET", "/v1/nope", tok, nil, 404, nil)
 
 	var aud struct{ Events []api.AuditInfo }

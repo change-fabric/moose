@@ -12,6 +12,7 @@ import (
 	"github.com/change-fabric/moose/internal/audit"
 	"github.com/change-fabric/moose/internal/auth"
 	"github.com/change-fabric/moose/internal/core"
+	moosemcp "github.com/change-fabric/moose/internal/mcp"
 	"github.com/change-fabric/moose/internal/store"
 )
 
@@ -26,8 +27,8 @@ type Deps struct {
 	Version string
 	Logger  *slog.Logger
 	Now     func() time.Time
-	// MCP serves /mcp behind the same auth. Nil mounts a 501 placeholder
-	// until the MCP server lands.
+	// MCP overrides the /mcp handler. Nil serves the moose MCP server over
+	// Service; either way it sits behind the same auth.
 	MCP http.Handler
 }
 
@@ -40,10 +41,7 @@ func New(d Deps) http.Handler {
 
 	mcp := d.MCP
 	if mcp == nil {
-		mcp = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			audit.FromContext(r.Context()).SetAction("mcp", "", "")
-			auth.WriteError(w, http.StatusNotImplemented, "not_implemented", "the MCP endpoint is not available in this build")
-		})
+		mcp = moosemcp.Handler(moosemcp.NewServer(d.Service, d.Version))
 	}
 	mux.Handle(MCPPath, mcp)
 	mux.Handle(MCPPath+"/", mcp)
