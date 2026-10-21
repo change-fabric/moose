@@ -25,5 +25,7 @@ jobs:
         run: go vet ./...
       - name: Test
         run: go test ./...
+      - name: Store conformance (dynamodb-local)
+        run: make test-store
       - name: License check
         run: make license-check
