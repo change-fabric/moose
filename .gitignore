@@ -1,0 +1,7 @@
+.DS_Store
+*.tfstate
+*.tfstate.*
+.terraform/
+.env
+*.json.key
+bin/
