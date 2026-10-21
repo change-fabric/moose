@@ -1,0 +1,297 @@
+openapi: 3.1.0
+info:
+  title: moose REST API
+  version: v1
+  license:
+    name: MIT
+    identifier: MIT
+  description: |
+    moose exposes data shared with its service account to coding agents. Every
+    route except /healthz needs a tailnet identity and a personal access token
+    (Authorization: Bearer moose_pat_...) owned by that identity.
+    POST /v1/bootstrap/token needs the tailnet identity only.
+servers:
+  - url: https://moose.example-tailnet.ts.net
+security:
+  - pat: []
+components:
+  securitySchemes:
+    pat:
+      type: http
+      scheme: bearer
+      description: moose personal access token, moose_pat_<id>_<secret>
+  responses:
+    Error:
+      description: Error. 401 responses carry WWW-Authenticate Bearer realm="moose".
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+  parameters:
+    Limit:
+      name: limit
+      in: query
+      schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+    PageToken:
+      name: page_token
+      in: query
+      schema: { type: string }
+  schemas:
+    Error:
+      type: object
+      required: [error, message]
+      properties:
+        error:
+          type: string
+          description: not_found, invalid_request, unauthenticated, invalid_token, token_owner_mismatch, forbidden, upstream_unavailable, document_too_large, bootstrap_used, internal
+        message: { type: string }
+    Identity:
+      type: object
+      properties:
+        login: { type: string }
+        tags: { type: array, items: { type: string } }
+        node: { type: string }
+    WhoAmI:
+      type: object
+      properties:
+        login: { type: string }
+        role: { type: string, enum: [admin, member] }
+        token_id: { type: string }
+        identity: { $ref: '#/components/schemas/Identity' }
+    Source:
+      type: object
+      properties:
+        id: { type: string }
+        kind: { type: string }
+        name: { type: string }
+        healthy: { type: boolean }
+        detail: { type: string }
+    DocRef:
+      type: object
+      properties:
+        source: { type: string }
+        id: { type: string }
+        title: { type: string }
+        mime_type: { type: string }
+        url: { type: string }
+        modified: { type: string, format: date-time }
+        snippet: { type: string }
+    Document:
+      allOf:
+        - $ref: '#/components/schemas/DocRef'
+        - type: object
+          properties:
+            content: { type: string }
+            content_type: { type: string, enum: [text/plain, text/csv, text/markdown, metadata-only] }
+            truncated: { type: boolean }
+    ResultPage:
+      type: object
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/DocRef' } }
+        next_page_token: { type: string }
+    TokenInfo:
+      type: object
+      properties:
+        id: { type: string }
+        owner: { type: string }
+        name: { type: string }
+        created: { type: string, format: date-time }
+        last_used: { type: string, format: date-time }
+        expires: { type: string, format: date-time }
+        revoked: { type: boolean }
+    CreatedToken:
+      allOf:
+        - $ref: '#/components/schemas/TokenInfo'
+        - type: object
+          properties:
+            token: { type: string, description: shown once }
+    User:
+      type: object
+      properties:
+        login: { type: string }
+        role: { type: string, enum: [admin, member] }
+        created: { type: string, format: date-time }
+        disabled: { type: boolean }
+    AuditEvent:
+      type: object
+      properties:
+        at: { type: string, format: date-time }
+        request_id: { type: string }
+        actor: { type: string }
+        token_id: { type: string }
+        surface: { type: string, enum: [rest, mcp, cli] }
+        action: { type: string }
+        source: { type: string }
+        doc_id: { type: string }
+        status: { type: integer }
+        latency_ms: { type: integer }
+        detail: { type: string }
+paths:
+  /healthz:
+    get:
+      security: []
+      summary: Liveness; does not call data sources
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  version: { type: string }
+  /v1/whoami:
+    get:
+      summary: The authenticated principal
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/WhoAmI' } } } }
+        default: { $ref: '#/components/responses/Error' }
+  /v1/sources:
+    get:
+      summary: Connected sources, with health and the account to share with
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  sources: { type: array, items: { $ref: '#/components/schemas/Source' } }
+        default: { $ref: '#/components/responses/Error' }
+  /v1/search:
+    get:
+      summary: Live search across sources
+      parameters:
+        - { name: q, in: query, required: true, schema: { type: string, minLength: 1, maxLength: 256 } }
+        - { name: source, in: query, schema: { type: string } }
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/PageToken'
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/ResultPage' } } } }
+        default: { $ref: '#/components/responses/Error' }
+  /v1/list:
+    get:
+      summary: Top-level items shared with moose
+      parameters:
+        - { name: source, in: query, schema: { type: string, default: gdrive } }
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/PageToken'
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/ResultPage' } } } }
+        default: { $ref: '#/components/responses/Error' }
+  /v1/documents/{source}/{id}:
+    get:
+      summary: One document's text (404 when missing or not shared; 413 too large; 503 upstream)
+      parameters:
+        - { name: source, in: path, required: true, schema: { type: string } }
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Document' } } } }
+        default: { $ref: '#/components/responses/Error' }
+  /v1/bootstrap/token:
+    post:
+      security: []
+      summary: First PAT for an existing user who owns no tokens (tailnet identity only); 410 afterwards
+      requestBody:
+        content:
+          application/json:
+            schema: { type: object, properties: { name: { type: string } } }
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  token: { type: string }
+                  id: { type: string }
+                  owner: { type: string }
+                  name: { type: string }
+                  expires: { type: string, format: date-time }
+        default: { $ref: '#/components/responses/Error' }
+  /v1/tokens:
+    post:
+      summary: Create a token; owner other than self, or expires_in_days 0, requires admin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string }
+                owner: { type: string }
+                expires_in_days: { type: integer, minimum: 0, default: 90 }
+      responses:
+        '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/CreatedToken' } } } }
+        default: { $ref: '#/components/responses/Error' }
+    get:
+      summary: Own tokens; admins may pass owner or all=1
+      parameters:
+        - { name: owner, in: query, schema: { type: string } }
+        - { name: all, in: query, schema: { type: string, enum: ['1'] } }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  tokens: { type: array, items: { $ref: '#/components/schemas/TokenInfo' } }
+        default: { $ref: '#/components/responses/Error' }
+  /v1/tokens/{id}:
+    delete:
+      summary: Revoke own token; admins any
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        '204': { description: Revoked }
+        default: { $ref: '#/components/responses/Error' }
+  /v1/users:
+    post:
+      summary: Add or update a user (admin)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [login]
+              properties:
+                login: { type: string }
+                role: { type: string, enum: [admin, member], default: member }
+      responses:
+        '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/User' } } } }
+        default: { $ref: '#/components/responses/Error' }
+    get:
+      summary: List users (admin)
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  users: { type: array, items: { $ref: '#/components/schemas/User' } }
+        default: { $ref: '#/components/responses/Error' }
+  /v1/audit:
+    get:
+      summary: Recent audit events, newest first (admin)
+      parameters:
+        - { name: since, in: query, description: RFC 3339 time or duration such as 24h (default 24h), schema: { type: string } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 1000, default: 100 } }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  events: { type: array, items: { $ref: '#/components/schemas/AuditEvent' } }
+        default: { $ref: '#/components/responses/Error' }

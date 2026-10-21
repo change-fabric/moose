@@ -25,6 +25,9 @@ var (
 	ErrNotFound      = errors.New("not found or not shared with moose")
 	ErrInvalidInput  = errors.New("invalid input")
 	ErrUnknownSource = errors.New("unknown source")
+	// ErrUpstreamUnavailable means a data source cannot serve requests right
+	// now (for example its credentials are missing). Transports answer 503.
+	ErrUpstreamUnavailable = errors.New("upstream unavailable")
 )
 
 // Defaults and limits.

@@ -31,6 +31,18 @@ make build test vet        # Makefile recipes use $(GO), default ./scripts/go
 make license-check         # every dependency must be MIT-compatible
 ```
 
+Run a local dev hub on plain HTTP with a fixed identity (refused when `MOOSE_ENV=prod`), then get a first token with the CLI. `MOOSE_CREDENTIALS` keeps the CLI's credentials in the mounted repo, since each `./scripts/go` run is a fresh container:
+
+```sh
+MOOSE_ENV=dev MOOSE_LISTEN=127.0.0.1:8787 MOOSE_DEV_IDENTITY=me@example.com \
+  MOOSE_BOOTSTRAP_ADMIN=me@example.com ./scripts/go run ./cmd/moosed
+export MOOSE_CREDENTIALS=/src/dist/dev-credentials.json
+./scripts/go run ./cmd/moose token bootstrap --url http://127.0.0.1:8787 --name dev
+./scripts/go run ./cmd/moose whoami
+```
+
+The REST API is described in [`api/openapi.yaml`](api/openapi.yaml). CLI exit codes: 0 ok, 1 usage, 2 auth (401/403), 3 not found, 4 upstream or server error.
+
 ## License
 
 Moose is open source software released under the [MIT License](LICENSE).
