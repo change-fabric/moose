@@ -66,14 +66,14 @@ TF_DIR := deploy/terraform/aws
 # The zip step runs on the host and bundles deploy/lambda/moose.yaml.
 lambda:
 	mkdir -p dist/lambda
-	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 $(GO) build -trimpath -buildvcs=false -tags lambda.norpc -ldflags "$(LDFLAGS)" -o dist/lambda/bootstrap ./cmd/moose-lambda
+	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 $(GO) build -trimpath -tags lambda.norpc -ldflags "$(LDFLAGS)" -o dist/lambda/bootstrap ./cmd/moose-lambda
 	cp deploy/lambda/moose.yaml dist/lambda/moose.yaml
 	rm -f dist/moose-lambda.zip
 	cd dist/lambda && zip -q -X ../moose-lambda.zip bootstrap moose.yaml
 
 relay-proxy:
 	mkdir -p dist
-	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 $(GO) build -trimpath -buildvcs=false -ldflags "$(LDFLAGS)" -o dist/moose-relay-proxy ./cmd/moose-relay-proxy
+	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 $(GO) build -trimpath -ldflags "$(LDFLAGS)" -o dist/moose-relay-proxy ./cmd/moose-relay-proxy
 
 tf-validate:
 	$(TF) -chdir=$(TF_DIR) init -backend=false -input=false >/dev/null

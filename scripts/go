@@ -16,11 +16,14 @@ done < <(compgen -e | grep '^MOOSE_' || true)
 tty_args=()
 if [[ -t 0 && -t 1 ]]; then tty_args=(-it); fi
 
+# The bind-mounted repo is owned by the host user, so git (and VCS stamping)
+# needs /src marked safe.
 exec docker run --rm ${tty_args[@]+"${tty_args[@]}"} \
   -v "$repo:/src" \
   -v moose-gomod:/go/pkg/mod \
   -v moose-gobuild:/root/.cache/go-build \
   -w /src \
+  -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0=/src \
   --network host \
   ${env_args[@]+"${env_args[@]}"} \
   "$GO_IMAGE" go "$@"
