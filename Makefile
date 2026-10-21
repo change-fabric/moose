@@ -6,7 +6,7 @@ LDFLAGS := -s -w -X main.version=$(VERSION)
 GOLANGCI_IMAGE ?= golangci/golangci-lint:v2.15.0
 ALLOWED_LICENSES := MIT,BSD-2-Clause,BSD-3-Clause,Apache-2.0,ISC,MPL-2.0
 
-.PHONY: build test vet lint license-check test-store clean
+.PHONY: build test vet lint license-check test-store clean link-secrets up down logs ps
 
 build:
 	CGO_ENABLED=0 $(GO) build -trimpath -ldflags "$(LDFLAGS)" -o dist/ ./cmd/...
@@ -32,6 +32,32 @@ test-store:
 # modernc.org/mathutil is BSD-3-Clause, but its LICENSE wording defeats the go-licenses classifier.
 license-check:
 	$(GO) run github.com/google/go-licenses@v1.6.0 check ./... --allowed_licenses=$(ALLOWED_LICENSES) --ignore modernc.org/mathutil
+
+# Mac Mini deployment (Docker Compose, no Terraform).
+COMPOSE := docker compose -f deploy/compose/docker-compose.yml
+SECRETS_DIR ?= $(HOME)/1-areas/pst/moose/secrets
+
+# Idempotent: symlinks secrets into the repo, skipping any source that does not exist.
+link-secrets:
+	@mkdir -p deploy/compose/secrets
+	@for pair in .env.compose:deploy/compose/.env gdrive-sa.json:deploy/compose/secrets/gdrive-sa.json; do \
+	  src="$(SECRETS_DIR)/$${pair%%:*}"; dst="$${pair#*:}"; \
+	  if [ -e "$$src" ]; then ln -sfn "$$src" "$$dst" && echo "linked $$dst -> $$src"; \
+	  else echo "skip $$dst: $$src not found"; fi; \
+	done
+
+up:
+	$(COMPOSE) build --build-arg VERSION=$(VERSION)
+	$(COMPOSE) up -d
+
+down:
+	$(COMPOSE) down
+
+logs:
+	$(COMPOSE) logs -f moosed
+
+ps:
+	$(COMPOSE) ps
 
 clean:
 	rm -rf dist

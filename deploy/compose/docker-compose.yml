@@ -1,0 +1,25 @@
+# Mac Mini deployment. No ports are published: tsnet is the only ingress.
+name: moose
+services:
+  moosed:
+    build:
+      context: ../..
+      dockerfile: deploy/compose/Dockerfile
+    image: moose/moosed:local
+    restart: unless-stopped
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      MOOSE_CONFIG: /config/moose.yaml
+      MOOSE_TSNET_STATE_DIR: /data/tsnet
+      MOOSE_GDRIVE_KEY_FILE: /run/secrets/gdrive_key
+    volumes:
+      - moose-data:/data
+      - ./moose.yaml:/config/moose.yaml:ro
+    secrets: [gdrive_key]
+volumes:
+  moose-data: {}
+secrets:
+  gdrive_key:
+    file: ./secrets/gdrive-sa.json

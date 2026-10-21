@@ -12,3 +12,4 @@ deploy/compose/secrets/
 *.tfstate*
 *.tfvars
 !*.tfvars.example
+deploy/compose/moose.yaml

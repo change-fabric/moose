@@ -43,6 +43,27 @@ export MOOSE_CREDENTIALS=/src/dist/dev-credentials.json
 
 The REST API is described in [`api/openapi.yaml`](api/openapi.yaml). CLI exit codes: 0 ok, 1 usage, 2 auth (401/403), 3 not found, 4 upstream or server error.
 
+## Mac Mini
+
+Docker Compose plus the Makefile; no Terraform and no published ports. `moosed` joins the tailnet with tsnet as node `moose` and serves `https://moose.<tailnet>.ts.net`.
+
+1. Create a GCP project, enable the Drive API, and create a service account. Download its JSON key to `~/1-areas/pst/moose/secrets/gdrive-sa.json`.
+2. Share the Drive folders moose should see with the service account's email. That sharing is the only access control on content.
+3. Paste [`deploy/tailscale/acl-snippet.hujson`](deploy/tailscale/acl-snippet.hujson) into the tailnet policy file, then create an auth key: not reusable, pre-authorized, tag `tag:moose-hub`.
+4. Copy [`deploy/compose/.env.example`](deploy/compose/.env.example) to `~/1-areas/pst/moose/secrets/.env.compose` and fill in `TS_AUTHKEY` and `MOOSE_BOOTSTRAP_ADMIN` (your tailnet login).
+5. Copy [`moose.example.yaml`](moose.example.yaml) to `deploy/compose/moose.yaml` and set `env: prod` and `tailnet`.
+6. Link the secrets and start the hub:
+
+   ```sh
+   make link-secrets   # idempotent; symlinks .env and secrets/gdrive-sa.json
+   make up && make ps
+   make logs
+   ```
+
+7. From another tailnet device, check `curl -fsS https://moose.<tailnet>.ts.net/healthz`, then mint the first token with `moose token bootstrap --url https://moose.<tailnet>.ts.net --name laptop`.
+
+tsnet state lives in the `moose-data` volume, so only the first boot needs the auth key. `make down` stops the hub and keeps the volume.
+
 ## License
 
 Moose is open source software released under the [MIT License](LICENSE).

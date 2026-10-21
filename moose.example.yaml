@@ -1,0 +1,20 @@
+# Deployment settings only. Document visibility is exactly what the Google
+# service account can see in Drive; there are no access rules here.
+# Mac Mini: copy to deploy/compose/moose.yaml and set env: prod and tailnet.
+env: dev                     # dev | prod
+tailnet: example-tailnet.ts.net
+hostname: moose              # tsnet node name (Mac) / relay hostname (AWS)
+identity:
+  mode: tsnet                # tsnet | relay-headers | dev
+  allowed_logins: []         # empty = any tailnet user
+  allowed_tags: [tag:moose-client]
+connectors:
+  gdrive:
+    enabled: true
+    max_document_bytes: 2097152
+redaction:
+  patterns: []               # Go regexps applied to returned content, e.g. "AKIA[0-9A-Z]{16}"
+store:
+  kind: sqlite               # sqlite | dynamo
+  sqlite_path: /data/moose.db
+  dynamo_table: ""

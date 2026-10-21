@@ -1,0 +1,14 @@
+// Paste into the tailnet policy file by hand (merge with existing keys).
+// The policy file is shared tailnet-wide, so Terraform does not manage it.
+{
+  "tagOwners": {
+    "tag:moose-hub":    ["autogroup:admin"],
+    "tag:moose-relay":  ["autogroup:admin"],
+    "tag:moose-client": ["autogroup:admin"],
+  },
+  "grants": [
+    {"src": ["autogroup:member", "tag:moose-client"], "dst": ["tag:moose-hub", "tag:moose-relay"], "ip": ["tcp:443"]},
+    {"src": ["group:moose-ops"], "dst": ["10.42.0.0/24"], "ip": ["tcp:443"]},
+  ],
+  "autoApprovers": {"routes": {"10.42.0.0/24": ["tag:moose-relay"]}},
+}
