@@ -1,0 +1,19 @@
+# Config bundled into the Lambda zip by `make lambda` (read via
+# MOOSE_CONFIG=/var/task/moose.yaml). Secrets and the table name come from the
+# environment that Terraform sets: MOOSE_DYNAMO_TABLE, MOOSE_RELAY_SECRET_ARN,
+# MOOSE_GDRIVE_KEY_SECRET_ARN, MOOSE_BOOTSTRAP_ADMIN, MOOSE_ENV.
+env: prod
+hostname: moose
+identity:
+  mode: relay-headers        # tailscale serve headers + relay shared secret
+  allowed_logins: []         # empty = any tailnet user
+  allowed_tags: []           # tagged devices get no serve headers on AWS in v0
+connectors:
+  gdrive:
+    enabled: true
+    max_document_bytes: 2097152
+redaction:
+  patterns: []
+store:
+  kind: dynamo
+  dynamo_table: ""           # MOOSE_DYNAMO_TABLE

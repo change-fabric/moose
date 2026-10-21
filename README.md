@@ -64,6 +64,34 @@ Docker Compose plus the Makefile; no Terraform and no published ports. `moosed` 
 
 tsnet state lives in the `moose-data` volume, so only the first boot needs the auth key. `make down` stops the hub and keeps the volume.
 
+## AWS
+
+Terraform root in [`deploy/terraform/aws`](deploy/terraform/aws): a Go Lambda (`provided.al2023`, arm64, outside any VPC) behind a private REST API Gateway that accepts traffic only from one execute-api VPC endpoint, DynamoDB on demand, Secrets Manager, and a t4g.nano relay EC2. The relay runs Tailscale as a subnet router (`tag:moose-relay`) and `tailscale serve` in front of `moose-relay-proxy`, which forwards to the API with a shared secret. The Lambda trusts the `Tailscale-User-Login` header only alongside that secret. Clients use the same `https://moose.<tailnet>.ts.net/mcp` URL as on the Mac Mini (set `relay_hostname = "moose-aws"` if both run in one tailnet).
+
+1. Create an S3 bucket for state, copy `backend.tf.example` to `backend.tf` (gitignored), and set the bucket name. Copy `env/dev.tfvars.example` to `env/dev.tfvars` and set `tailnet` and `bootstrap_admin`.
+2. Paste the ACL snippet (step 3 of the Mac Mini section), including `tagOwners` for `tag:moose-relay`. Export Tailscale API credentials as `TAILSCALE_OAUTH_CLIENT_ID` and `TAILSCALE_OAUTH_CLIENT_SECRET` (or `TAILSCALE_API_KEY`), plus your AWS credentials.
+3. Build the artifacts and apply. The bundled Lambda config is [`deploy/lambda/moose.yaml`](deploy/lambda/moose.yaml).
+
+   ```sh
+   make lambda relay-proxy
+   terraform -chdir=deploy/terraform/aws init
+   make tf-plan
+   terraform -chdir=deploy/terraform/aws apply -var-file=env/dev.tfvars
+   ```
+
+4. Put the secret values. Terraform creates only the empty secrets, so key material never enters state:
+
+   ```sh
+   aws secretsmanager put-secret-value --secret-id moose/dev/gdrive-sa-key --secret-string file://$HOME/1-areas/pst/moose/secrets/gdrive-sa.json
+   aws secretsmanager put-secret-value --secret-id moose/dev/relay-secret --secret-string "$(openssl rand -base64 48)"
+   ```
+
+   The relay proxy service retries every 30 seconds until the relay secret exists. The Lambda reads both secrets at cold start: until the relay secret exists its init fails and is retried on the next request, but a warm instance keeps a missing Drive key until it is recycled (`aws lambda update-function-configuration --function-name moose-dev --description reload` forces that).
+5. If the apply timed out waiting for the relay to join the tailnet, run `apply` again; the second run approves the VPC route.
+6. From a tailnet device, mint the first token with `moose token bootstrap --url https://moose.<tailnet>.ts.net --name laptop`, then check `curl -fsS -H "Authorization: Bearer $MOOSE_PAT" https://moose.<tailnet>.ts.net/v1/whoami`.
+
+Idle cost is roughly $11-12 a month: the relay about $3, one-AZ interface endpoint about $7-8, secrets $0.80; Lambda, API Gateway, and DynamoDB are near zero at pre-alpha volume. The one-hour Tailscale auth key is stored in Terraform state, so keep the state bucket private.
+
 ## License
 
 Moose is open source software released under the [MIT License](LICENSE).

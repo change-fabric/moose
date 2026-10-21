@@ -1,0 +1,6 @@
+# Copy to env/dev.tfvars (gitignored).
+env             = "dev"
+region          = "us-east-1"
+tailnet         = "example.ts.net"
+relay_hostname  = "moose" # moose-aws if a Mac Mini deployment shares the tailnet
+bootstrap_admin = "you@example.com"

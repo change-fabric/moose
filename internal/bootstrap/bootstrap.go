@@ -42,6 +42,9 @@ type Options struct {
 	// DynamoClient is used when store.kind is dynamo. Nil is an error until
 	// the AWS entrypoint supplies one.
 	DynamoClient dynamo.API
+	// Secret resolves a secret ARN to its value. The Lambda entrypoint
+	// supplies a Secrets Manager reader; without it ARN-based settings fail.
+	Secret func(ctx context.Context, arn string) ([]byte, error)
 }
 
 // FromEnv loads config and builds the runtime. The caller closes Runtime.Store.
@@ -69,7 +72,7 @@ func FromEnv(ctx context.Context, opts Options) (*Runtime, error) {
 		return fail(fmt.Errorf("bootstrap admin: %w", err))
 	}
 
-	conns, maxBytes, err := connectors(ctx, cfg, opts.Logger)
+	conns, maxBytes, err := connectors(ctx, cfg, opts.Logger, opts.Secret)
 	if err != nil {
 		return fail(err)
 	}
@@ -79,7 +82,7 @@ func FromEnv(ctx context.Context, opts Options) (*Runtime, error) {
 
 	idSrc := opts.Identity
 	if idSrc == nil {
-		if idSrc, err = identity(cfg); err != nil {
+		if idSrc, err = identity(ctx, cfg, opts.Secret); err != nil {
 			return fail(err)
 		}
 	}
@@ -116,7 +119,7 @@ func openStore(ctx context.Context, cfg config.Config, ddb dynamo.API) (store.St
 	return nil, fmt.Errorf("store: unknown kind %q", cfg.Store.Kind)
 }
 
-func connectors(ctx context.Context, cfg config.Config, log *slog.Logger) ([]core.Connector, int64, error) {
+func connectors(ctx context.Context, cfg config.Config, log *slog.Logger, secret func(context.Context, string) ([]byte, error)) ([]core.Connector, int64, error) {
 	gc, ok := cfg.Connectors[gdrive.ID]
 	if !ok || !gc.Enabled {
 		return nil, 0, nil
@@ -126,6 +129,8 @@ func connectors(ctx context.Context, cfg config.Config, log *slog.Logger) ([]cor
 	switch {
 	case cfg.GDriveKeyFile != "":
 		key, keyErr = os.ReadFile(cfg.GDriveKeyFile)
+	case cfg.GDriveKeySecretARN != "" && secret != nil:
+		key, keyErr = secret(ctx, cfg.GDriveKeySecretARN)
 	case cfg.GDriveKeySecretARN != "":
 		keyErr = errors.New("MOOSE_GDRIVE_KEY_SECRET_ARN is read by the Lambda entrypoint only")
 	default:
@@ -143,13 +148,23 @@ func connectors(ctx context.Context, cfg config.Config, log *slog.Logger) ([]cor
 	return []core.Connector{Unavailable{IDValue: gdrive.ID, NameValue: "Google Drive", Err: keyErr}}, gc.MaxDocumentBytes, nil
 }
 
-func identity(cfg config.Config) (auth.IdentitySource, error) {
+func identity(ctx context.Context, cfg config.Config, secret func(context.Context, string) ([]byte, error)) (auth.IdentitySource, error) {
 	switch cfg.Identity.Mode {
 	case config.IdentityDev:
 		return auth.NewDevIdentity(cfg.Env, cfg.DevIdentity)
 	case config.IdentityTSNet:
 		return nil, errors.New("identity.mode tsnet needs the tsnet node from moosed")
 	case config.IdentityRelayHeaders:
+		if secret != nil && cfg.RelaySecretARN != "" {
+			v, err := secret(ctx, cfg.RelaySecretARN)
+			if err != nil {
+				return nil, fmt.Errorf("relay secret: %w", err)
+			}
+			if len(v) == 0 {
+				return nil, errors.New("relay secret is empty (put a value with aws secretsmanager put-secret-value)")
+			}
+			return auth.HeaderIdentity{Secret: v}, nil
+		}
 		return nil, errors.New("identity.mode relay-headers needs the relay secret from the Lambda entrypoint")
 	}
 	return nil, fmt.Errorf("identity.mode %q is not supported here", cfg.Identity.Mode)

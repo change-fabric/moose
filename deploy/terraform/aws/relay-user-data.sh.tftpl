@@ -1,0 +1,77 @@
+#!/bin/bash
+# moose relay bootstrap (idempotent): Tailscale subnet router + relay proxy
+# container fronted by tailscale serve. Rendered by Terraform.
+set -euo pipefail
+
+# Proxy artifact etag: ${proxy_etag}
+
+# IP forwarding for the subnet route.
+cat >/etc/sysctl.d/99-tailscale.conf <<'SYSCTL'
+net.ipv4.ip_forward = 1
+net.ipv6.conf.all.forwarding = 1
+SYSCTL
+sysctl -p /etc/sysctl.d/99-tailscale.conf
+
+# Tailscale.
+if ! command -v tailscale >/dev/null; then
+  dnf config-manager --add-repo https://pkgs.tailscale.com/stable/amazon-linux/2023/tailscale.repo
+  dnf install -y tailscale
+fi
+systemctl enable --now tailscaled
+if ! tailscale status >/dev/null 2>&1; then
+  tailscale up \
+    --authkey='${ts_authkey}' \
+    --hostname='${hostname}' \
+    --advertise-routes='${vpc_cidr}' \
+    --advertise-tags=tag:moose-relay
+fi
+
+# Docker for the relay proxy container.
+dnf install -y docker
+systemctl enable --now docker
+
+# Relay proxy binary. The secret is fetched on every service start, so the
+# unit retries until the operator has put a value in Secrets Manager.
+install -d -m 0700 /opt/moose
+aws --region '${region}' s3 cp '${proxy_s3_uri}' /opt/moose/moose-relay-proxy
+chmod 0755 /opt/moose/moose-relay-proxy
+cat >/opt/moose/fetch-secret.sh <<'FETCH'
+#!/bin/bash
+set -euo pipefail
+umask 077
+aws --region '${region}' secretsmanager get-secret-value \
+  --secret-id '${relay_secret_arn}' --query SecretString --output text >/opt/moose/relay-secret.tmp
+mv /opt/moose/relay-secret.tmp /opt/moose/relay-secret
+FETCH
+chmod 0700 /opt/moose/fetch-secret.sh
+
+cat >/etc/systemd/system/moose-relay-proxy.service <<'UNIT'
+[Unit]
+Description=moose relay proxy (container)
+After=docker.service network-online.target
+Requires=docker.service
+StartLimitIntervalSec=0
+
+[Service]
+Restart=always
+RestartSec=30
+ExecStartPre=/opt/moose/fetch-secret.sh
+ExecStartPre=-/usr/bin/docker rm -f moose-relay-proxy
+ExecStart=/usr/bin/docker run --rm --name moose-relay-proxy --network host \
+  -v /opt/moose:/opt/moose:ro \
+  -e MOOSE_RELAY_LISTEN=127.0.0.1:8080 \
+  -e MOOSE_RELAY_UPSTREAM=${upstream} \
+  -e MOOSE_RELAY_SECRET_FILE=/opt/moose/relay-secret \
+  --entrypoint /opt/moose/moose-relay-proxy \
+  ${proxy_image}
+ExecStop=/usr/bin/docker stop moose-relay-proxy
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+systemctl daemon-reload
+systemctl enable moose-relay-proxy
+systemctl restart --no-block moose-relay-proxy
+
+# Front the proxy on the tailnet; serve injects Tailscale-User-* headers.
+tailscale serve --bg --https=443 http://127.0.0.1:8080

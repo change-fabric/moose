@@ -6,7 +6,7 @@ LDFLAGS := -s -w -X main.version=$(VERSION)
 GOLANGCI_IMAGE ?= golangci/golangci-lint:v2.15.0
 ALLOWED_LICENSES := MIT,BSD-2-Clause,BSD-3-Clause,Apache-2.0,ISC,MPL-2.0
 
-.PHONY: build test vet lint license-check test-store clean link-secrets up down logs ps
+.PHONY: build test vet lint license-check test-store clean link-secrets up down logs ps lambda relay-proxy tf-validate tf-plan
 
 build:
 	CGO_ENABLED=0 $(GO) build -trimpath -ldflags "$(LDFLAGS)" -o dist/ ./cmd/...
@@ -58,6 +58,29 @@ logs:
 
 ps:
 	$(COMPOSE) ps
+
+# AWS deployment (Terraform root in deploy/terraform/aws).
+TF ?= terraform
+TF_DIR := deploy/terraform/aws
+
+# The zip step runs on the host and bundles deploy/lambda/moose.yaml.
+lambda:
+	mkdir -p dist/lambda
+	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 $(GO) build -trimpath -buildvcs=false -tags lambda.norpc -ldflags "$(LDFLAGS)" -o dist/lambda/bootstrap ./cmd/moose-lambda
+	cp deploy/lambda/moose.yaml dist/lambda/moose.yaml
+	rm -f dist/moose-lambda.zip
+	cd dist/lambda && zip -q -X ../moose-lambda.zip bootstrap moose.yaml
+
+relay-proxy:
+	mkdir -p dist
+	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 $(GO) build -trimpath -buildvcs=false -ldflags "$(LDFLAGS)" -o dist/moose-relay-proxy ./cmd/moose-relay-proxy
+
+tf-validate:
+	$(TF) -chdir=$(TF_DIR) init -backend=false -input=false >/dev/null
+	$(TF) -chdir=$(TF_DIR) validate
+
+tf-plan:
+	$(TF) -chdir=$(TF_DIR) plan -var-file=env/dev.tfvars
 
 clean:
 	rm -rf dist

@@ -29,3 +29,16 @@ jobs:
         run: make test-store
       - name: License check
         run: make license-check
+
+  terraform:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.15.8
+      - name: Format
+        run: terraform -chdir=deploy/terraform/aws fmt -check -recursive
+      - name: Validate
+        run: make tf-validate
