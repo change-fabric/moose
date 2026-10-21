@@ -6,7 +6,7 @@ LDFLAGS := -s -w -X main.version=$(VERSION)
 GOLANGCI_IMAGE ?= golangci/golangci-lint:v2.15.0
 ALLOWED_LICENSES := MIT,BSD-2-Clause,BSD-3-Clause,Apache-2.0,ISC,MPL-2.0
 
-.PHONY: build test vet lint license-check test-store clean link-secrets up down logs ps lambda relay-proxy tf-validate tf-plan
+.PHONY: build test vet lint license-check test-store clean link-secrets up down logs ps lambda relay-proxy tf-validate tf-plan e2e
 
 build:
 	CGO_ENABLED=0 $(GO) build -trimpath -ldflags "$(LDFLAGS)" -o dist/ ./cmd/...
@@ -84,3 +84,8 @@ tf-plan:
 
 clean:
 	rm -rf dist
+
+# Smoke test against a live deployment. Needs MOOSE_URL, MOOSE_PAT (admin),
+# MOOSE_E2E_QUERY, and MOOSE_E2E_DOC_ID; builds the CLI first unless MOOSE_BIN is set.
+e2e:
+	@if [ -z "$$MOOSE_BIN" ]; then $(MAKE) build && MOOSE_BIN="$(CURDIR)/dist/moose" ./test/e2e/smoke.sh; else ./test/e2e/smoke.sh; fi

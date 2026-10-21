@@ -92,6 +92,55 @@ Terraform root in [`deploy/terraform/aws`](deploy/terraform/aws): a Go Lambda (`
 
 Idle cost is roughly $11-12 a month: the relay about $3, one-AZ interface endpoint about $7-8, secrets $0.80; Lambda, API Gateway, and DynamoDB are near zero at pre-alpha volume. The one-hour Tailscale auth key is stored in Terraform state, so keep the state bucket private.
 
+## Clients
+
+Every client needs a PAT (`moose token create --name <laptop>`) and must be on the tailnet. Export it as `MOOSE_PAT`.
+
+### Claude Code
+
+```sh
+claude mcp add --transport http moose https://moose.<tailnet>.ts.net/mcp \
+  --header "Authorization: Bearer $MOOSE_PAT"
+claude mcp list   # moose should show as connected
+```
+
+Then ask, for example, "use moose to search for <term>".
+
+### opencode
+
+In `opencode.json`:
+
+```json
+{
+  "mcp": {
+    "moose": {
+      "type": "remote",
+      "url": "https://moose.<tailnet>.ts.net/mcp",
+      "headers": { "Authorization": "Bearer {env:MOOSE_PAT}" }
+    }
+  }
+}
+```
+
+### Pi
+
+Pi has no native MCP support, so it uses the `moose` CLI through its shell tool. Install the CLI (`make build` puts it in `dist/moose`), log in once, and Pi can call it:
+
+```sh
+moose login --url https://moose.<tailnet>.ts.net   # reads the PAT from stdin
+moose search "quarterly plan" --json
+moose get <id>   # prints content to stdout
+```
+
+### Smoke test
+
+```sh
+MOOSE_URL=https://moose.<tailnet>.ts.net MOOSE_PAT=<admin PAT> \
+MOOSE_E2E_QUERY=<term> MOOSE_E2E_DOC_ID=<shared file id> make e2e
+```
+
+It checks health, auth (including the 401 challenge), sources, search, get, the not-found exit code, MCP `initialize` and `tools/list`, and the audit log.
+
 ## License
 
 Moose is open source software released under the [MIT License](LICENSE).
