@@ -2,6 +2,7 @@
 *.tfstate
 *.tfstate.*
 .terraform/
-.env
+.env*
+!.env.example
 *.json.key
 bin/
