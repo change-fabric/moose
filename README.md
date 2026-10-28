@@ -1,8 +1,10 @@
+<p align="center"><img src="docs/hero.gif" width="480" alt="moose: a lilac crayon scribble draws in and settles on the moose logo"></p>
+
 # moose
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-Moose is an open source, self-hostable context hub. It exposes proprietary data sources (starting with Google Drive) to coding agents such as Claude Code, opencode, and Pi through an MCP server, a REST API with personal access tokens, and a local CLI, reachable only inside your Tailscale tailnet.
+Moose is an open source, self-hostable framework for federated data access. It gives coding agents such as Claude Code, opencode, and Pi read access to your data where it already lives, through pluggable connectors, an MCP server, a REST API with personal access tokens, and a local CLI, reachable only inside your Tailscale tailnet. Content passes through on request; moose keeps no copy. Google Drive is the first connector.
 
 Status: pre-alpha. Nothing here is production ready.
 
