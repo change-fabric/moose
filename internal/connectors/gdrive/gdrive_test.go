@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -320,5 +321,84 @@ func TestHealth(t *testing.T) {
 func TestNewRejectsBadKey(t *testing.T) {
 	if _, err := New(context.Background(), []byte("{}")); err == nil {
 		t.Fatal("expected error")
+	}
+}
+
+// minimalPDF builds a PDF with one Helvetica page per text, with a correct xref table.
+func minimalPDF(texts ...string) string {
+	n := len(texts)
+	kids := make([]string, n)
+	for i := range texts {
+		kids[i] = fmt.Sprintf("%d 0 R", 4+2*i)
+	}
+	objs := []string{
+		"<< /Type /Catalog /Pages 2 0 R >>",
+		fmt.Sprintf("<< /Type /Pages /Kids [%s] /Count %d >>", strings.Join(kids, " "), n),
+		"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+	}
+	for i, text := range texts {
+		stream := fmt.Sprintf("BT /F1 12 Tf 72 720 Td (%s) Tj ET", text)
+		objs = append(objs,
+			fmt.Sprintf("<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents %d 0 R /Resources << /Font << /F1 3 0 R >> >> >>", 5+2*i),
+			fmt.Sprintf("<< /Length %d >>\nstream\n%s\nendstream", len(stream), stream))
+	}
+	var b strings.Builder
+	b.WriteString("%PDF-1.4\n")
+	offsets := make([]int, len(objs))
+	for i, o := range objs {
+		offsets[i] = b.Len()
+		fmt.Fprintf(&b, "%d 0 obj\n%s\nendobj\n", i+1, o)
+	}
+	xref := b.Len()
+	fmt.Fprintf(&b, "xref\n0 %d\n0000000000 65535 f \n", len(objs)+1)
+	for _, off := range offsets {
+		fmt.Fprintf(&b, "%010d 00000 n \n", off)
+	}
+	fmt.Fprintf(&b, "trailer\n<< /Size %d /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF\n", len(objs)+1, xref)
+	return b.String()
+}
+
+func TestGetPDF(t *testing.T) {
+	fd, c := newFake(t)
+	fd.add("pdf", "a.pdf", "application/pdf", minimalPDF("Return by May 11"))
+	fd.add("junk", "b.pdf", "application/pdf", "not a pdf")
+
+	d, err := c.Get(context.Background(), "pdf", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d.ContentType != core.ContentTypePlain || !strings.Contains(d.Content, "Return by May 11") {
+		t.Fatalf("got ct=%q content=%q", d.ContentType, d.Content)
+	}
+
+	d, err = c.Get(context.Background(), "pdf", 6)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(d.Content) != 6 || !d.Truncated {
+		t.Fatalf("truncation: content=%q trunc=%v", d.Content, d.Truncated)
+	}
+
+	d, err = c.Get(context.Background(), "junk", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d.ContentType != core.ContentTypeMetadataOnly || d.Snippet != noPDFTextNote {
+		t.Fatalf("junk: ct=%q snippet=%q", d.ContentType, d.Snippet)
+	}
+}
+
+func TestExtractPDFStopsAtBudget(t *testing.T) {
+	raw := []byte(minimalPDF("page one text", "page two text", "page three text"))
+	all, err := extractPDF(raw, 1<<20)
+	if err != nil || !strings.Contains(all, "page three") {
+		t.Fatalf("full extract: %q %v", all, err)
+	}
+	text, err := extractPDF(raw, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(text, "page one") || strings.Contains(text, "page two") {
+		t.Fatalf("budget 3 should stop after page one, got %q", text)
 	}
 }

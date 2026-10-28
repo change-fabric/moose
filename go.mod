@@ -11,6 +11,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/secretsmanager v1.50.5
 	github.com/awslabs/aws-lambda-go-api-proxy v0.16.2
 	github.com/google/jsonschema-go v0.4.3
+	github.com/ledongthuc/pdf v0.0.0-20261020125853-5e46805f718e
 	github.com/modelcontextprotocol/go-sdk v1.8.0
 	github.com/spf13/cobra v1.10.2
 	golang.org/x/oauth2 v0.37.0
