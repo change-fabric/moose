@@ -1,18 +1,26 @@
 package gdrive
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
 	"net/http"
 	"strings"
 
+	"github.com/ledongthuc/pdf"
 	"google.golang.org/api/drive/v3"
 
 	"github.com/change-fabric/moose/internal/core"
 )
 
-const firstSheetNote = "first sheet only"
+const (
+	firstSheetNote = "first sheet only"
+	noPDFTextNote  = "no extractable text (scanned or image-only PDF)"
+	// The whole PDF must be in memory to parse its xref table, so the raw
+	// download gets its own cap, independent of the returned text cap.
+	maxPDFBytes = 32 << 20
+)
 
 // Get fetches metadata, then text content by mime type, capped at maxBytes.
 func (c *Connector) Get(ctx context.Context, id string, maxBytes int64) (core.Document, error) {
@@ -42,6 +50,8 @@ func (c *Connector) Get(ctx context.Context, id string, maxBytes int64) (core.Do
 		return c.fill(ctx, doc, core.ContentTypeCSV, maxBytes, c.export(ctx, id, "text/csv"))
 	case f.MimeType == folderMime:
 		return c.folder(ctx, doc, maxBytes)
+	case f.MimeType == "application/pdf":
+		return c.pdfText(ctx, doc, maxBytes)
 	case isText(f.MimeType):
 		ct := core.ContentTypePlain
 		switch f.MimeType {
@@ -76,6 +86,61 @@ func (c *Connector) download(ctx context.Context, id string) opener {
 }
 
 func (c *Connector) fill(ctx context.Context, doc core.Document, ct string, maxBytes int64, open opener) (core.Document, error) {
+	b, truncated, err := c.read(ctx, open, maxBytes)
+	if err != nil {
+		return core.Document{}, err
+	}
+	doc.Content = string(b)
+	doc.ContentType = ct
+	doc.Truncated = truncated
+	return doc, nil
+}
+
+func (c *Connector) pdfText(ctx context.Context, doc core.Document, maxBytes int64) (core.Document, error) {
+	raw, tooBig, err := c.read(ctx, c.download(ctx, doc.ID), maxPDFBytes)
+	if err != nil {
+		return core.Document{}, err
+	}
+	doc.ContentType = core.ContentTypeMetadataOnly
+	if tooBig {
+		doc.Snippet = fmt.Sprintf("PDF larger than %d bytes; text not extracted", maxPDFBytes)
+		return doc, nil
+	}
+	text, err := extractPDF(raw)
+	if err != nil || strings.TrimSpace(text) == "" {
+		doc.Snippet = noPDFTextNote
+		return doc, nil
+	}
+	if int64(len(text)) > maxBytes {
+		text = text[:maxBytes]
+		doc.Truncated = true
+	}
+	doc.Content = text
+	doc.ContentType = core.ContentTypePlain
+	return doc, nil
+}
+
+// extractPDF recovers from panics because the parser panics on some malformed files.
+func extractPDF(raw []byte) (text string, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("parse pdf: %v", r)
+		}
+	}()
+	r, err := pdf.NewReader(bytes.NewReader(raw), int64(len(raw)))
+	if err != nil {
+		return "", err
+	}
+	rd, err := r.GetPlainText()
+	if err != nil {
+		return "", err
+	}
+	b, err := io.ReadAll(rd)
+	return string(b), err
+}
+
+// read returns at most limit bytes and whether the body was longer.
+func (c *Connector) read(ctx context.Context, open opener, limit int64) ([]byte, bool, error) {
 	var resp *http.Response
 	err := c.retry(ctx, func() error {
 		var err error
@@ -83,20 +148,17 @@ func (c *Connector) fill(ctx context.Context, doc core.Document, ct string, maxB
 		return err
 	})
 	if err != nil {
-		return core.Document{}, mapErr(err)
+		return nil, false, mapErr(err)
 	}
 	defer resp.Body.Close()
-	b, err := io.ReadAll(io.LimitReader(resp.Body, maxBytes+1))
+	b, err := io.ReadAll(io.LimitReader(resp.Body, limit+1))
 	if err != nil {
-		return core.Document{}, fmt.Errorf("%w: read body: %v", ErrUpstreamUnavailable, err)
+		return nil, false, fmt.Errorf("%w: read body: %v", ErrUpstreamUnavailable, err)
 	}
-	if int64(len(b)) > maxBytes {
-		b = b[:maxBytes]
-		doc.Truncated = true
+	if int64(len(b)) > limit {
+		return b[:limit], true, nil
 	}
-	doc.Content = string(b)
-	doc.ContentType = ct
-	return doc, nil
+	return b, false, nil
 }
 
 func (c *Connector) folder(ctx context.Context, doc core.Document, maxBytes int64) (core.Document, error) {
