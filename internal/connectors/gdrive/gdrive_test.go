@@ -324,15 +324,23 @@ func TestNewRejectsBadKey(t *testing.T) {
 	}
 }
 
-// minimalPDF builds a one-page PDF that draws text in Helvetica, with a correct xref table.
-func minimalPDF(text string) string {
-	stream := fmt.Sprintf("BT /F1 12 Tf 72 720 Td (%s) Tj ET", text)
+// minimalPDF builds a PDF with one Helvetica page per text, with a correct xref table.
+func minimalPDF(texts ...string) string {
+	n := len(texts)
+	kids := make([]string, n)
+	for i := range texts {
+		kids[i] = fmt.Sprintf("%d 0 R", 4+2*i)
+	}
 	objs := []string{
 		"<< /Type /Catalog /Pages 2 0 R >>",
-		"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
-		"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>",
-		fmt.Sprintf("<< /Length %d >>\nstream\n%s\nendstream", len(stream), stream),
+		fmt.Sprintf("<< /Type /Pages /Kids [%s] /Count %d >>", strings.Join(kids, " "), n),
 		"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+	}
+	for i, text := range texts {
+		stream := fmt.Sprintf("BT /F1 12 Tf 72 720 Td (%s) Tj ET", text)
+		objs = append(objs,
+			fmt.Sprintf("<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents %d 0 R /Resources << /Font << /F1 3 0 R >> >> >>", 5+2*i),
+			fmt.Sprintf("<< /Length %d >>\nstream\n%s\nendstream", len(stream), stream))
 	}
 	var b strings.Builder
 	b.WriteString("%PDF-1.4\n")
@@ -377,5 +385,20 @@ func TestGetPDF(t *testing.T) {
 	}
 	if d.ContentType != core.ContentTypeMetadataOnly || d.Snippet != noPDFTextNote {
 		t.Fatalf("junk: ct=%q snippet=%q", d.ContentType, d.Snippet)
+	}
+}
+
+func TestExtractPDFStopsAtBudget(t *testing.T) {
+	raw := []byte(minimalPDF("page one text", "page two text", "page three text"))
+	all, err := extractPDF(raw, 1<<20)
+	if err != nil || !strings.Contains(all, "page three") {
+		t.Fatalf("full extract: %q %v", all, err)
+	}
+	text, err := extractPDF(raw, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(text, "page one") || strings.Contains(text, "page two") {
+		t.Fatalf("budget 3 should stop after page one, got %q", text)
 	}
 }

@@ -106,7 +106,7 @@ func (c *Connector) pdfText(ctx context.Context, doc core.Document, maxBytes int
 		doc.Snippet = fmt.Sprintf("PDF larger than %d bytes; text not extracted", maxPDFBytes)
 		return doc, nil
 	}
-	text, err := extractPDF(raw)
+	text, err := extractPDF(raw, maxBytes)
 	if err != nil || strings.TrimSpace(text) == "" {
 		doc.Snippet = noPDFTextNote
 		return doc, nil
@@ -120,8 +120,11 @@ func (c *Connector) pdfText(ctx context.Context, doc core.Document, maxBytes int
 	return doc, nil
 }
 
-// extractPDF recovers from panics because the parser panics on some malformed files.
-func extractPDF(raw []byte) (text string, err error) {
+// extractPDF walks pages itself instead of calling Reader.GetPlainText, which
+// buffers every page before returning, and stops once more than maxBytes of
+// text is collected, so memory stays near maxBytes plus one page.
+// It recovers from panics because the parser panics on some malformed files.
+func extractPDF(raw []byte, maxBytes int64) (text string, err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			err = fmt.Errorf("parse pdf: %v", r)
@@ -131,12 +134,15 @@ func extractPDF(raw []byte) (text string, err error) {
 	if err != nil {
 		return "", err
 	}
-	rd, err := r.GetPlainText()
-	if err != nil {
-		return "", err
+	var sb strings.Builder
+	for i := 1; i <= r.NumPage() && int64(sb.Len()) <= maxBytes; i++ {
+		t, err := r.Page(i).GetPlainText(nil)
+		if err != nil {
+			return "", err
+		}
+		sb.WriteString(t)
 	}
-	b, err := io.ReadAll(rd)
-	return string(b), err
+	return sb.String(), nil
 }
 
 // read returns at most limit bytes and whether the body was longer.
