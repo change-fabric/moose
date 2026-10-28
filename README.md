@@ -47,15 +47,15 @@ The REST API is described in [`api/openapi.yaml`](api/openapi.yaml). CLI exit co
 
 Docker Compose plus the Makefile; no Terraform and no published ports. `moosed` joins the tailnet with tsnet as node `moose` and serves `https://moose.<tailnet>.ts.net`.
 
-1. Create a GCP project, enable the Drive API, and create a service account. Download its JSON key to `~/1-areas/pst/moose/secrets/gdrive-sa.json`.
+1. Create a GCP project, enable the Drive API, and create a service account. Download its JSON key to `~/.config/moose/secrets/gdrive-sa.json`.
 2. Share the Drive folders moose should see with the service account's email. That sharing is the only access control on content.
 3. Paste [`deploy/tailscale/acl-snippet.hujson`](deploy/tailscale/acl-snippet.hujson) into the tailnet policy file, then create an auth key: not reusable, pre-authorized, tag `tag:moose-hub`.
-4. Copy [`deploy/compose/.env.example`](deploy/compose/.env.example) to `~/1-areas/pst/moose/secrets/.env.compose` and fill in `TS_AUTHKEY` and `MOOSE_BOOTSTRAP_ADMIN` (your tailnet login).
+4. Copy [`deploy/compose/.env.example`](deploy/compose/.env.example) to `~/.config/moose/secrets/.env.compose` and fill in `TS_AUTHKEY` and `MOOSE_BOOTSTRAP_ADMIN` (your tailnet login).
 5. Copy [`moose.example.yaml`](moose.example.yaml) to `deploy/compose/moose.yaml` and set `env: prod` and `tailnet`.
 6. Link the secrets and start the hub:
 
    ```sh
-   make link-secrets   # idempotent; symlinks .env and secrets/gdrive-sa.json
+   make link-secrets   # idempotent; symlinks .env and secrets/gdrive-sa.json; set SECRETS_DIR to use another folder
    make up && make ps
    make logs
    ```
@@ -82,7 +82,7 @@ Terraform root in [`deploy/terraform/aws`](deploy/terraform/aws): a Go Lambda (`
 4. Put the secret values. Terraform creates only the empty secrets, so key material never enters state:
 
    ```sh
-   aws secretsmanager put-secret-value --secret-id moose/dev/gdrive-sa-key --secret-string file://$HOME/1-areas/pst/moose/secrets/gdrive-sa.json
+   aws secretsmanager put-secret-value --secret-id moose/dev/gdrive-sa-key --secret-string file://$HOME/.config/moose/secrets/gdrive-sa.json
    aws secretsmanager put-secret-value --secret-id moose/dev/relay-secret --secret-string "$(openssl rand -base64 48)"
    ```
 
