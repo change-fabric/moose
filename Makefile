@@ -35,7 +35,7 @@ license-check:
 
 # Mac Mini deployment (Docker Compose, no Terraform).
 COMPOSE := docker compose -f deploy/compose/docker-compose.yml
-SECRETS_DIR ?= $(HOME)/1-areas/pst/moose/secrets
+SECRETS_DIR ?= $(HOME)/.config/moose/secrets
 
 # Idempotent: symlinks secrets into the repo, skipping any source that does not exist.
 link-secrets:
