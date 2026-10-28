@@ -1,3 +1,5 @@
+<p align="center"><img src="docs/hero.gif" width="480" alt="moose: a lilac crayon scribble draws in and settles on the moose logo"></p>
+
 # moose
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
