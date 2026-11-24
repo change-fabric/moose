@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/change-fabric/moose/internal/connectors/fake"
-	"github.com/change-fabric/moose/internal/core"
+	"github.com/change-fabric/moose/internal/drive/connectors/fake"
+	"github.com/change-fabric/moose/internal/drive/core"
 )
 
 func doc(id, title, content string, mod time.Time) core.Document {

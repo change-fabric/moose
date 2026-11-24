@@ -7,7 +7,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/change-fabric/moose/internal/core"
+	"github.com/change-fabric/moose/internal/drive/core"
 )
 
 // Connector serves a fixed set of documents from memory.

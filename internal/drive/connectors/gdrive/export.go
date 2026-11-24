@@ -11,7 +11,7 @@ import (
 	"github.com/ledongthuc/pdf"
 	"google.golang.org/api/drive/v3"
 
-	"github.com/change-fabric/moose/internal/core"
+	"github.com/change-fabric/moose/internal/drive/core"
 )
 
 const (

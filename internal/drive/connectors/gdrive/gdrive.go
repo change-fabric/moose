@@ -16,7 +16,7 @@ import (
 	"google.golang.org/api/googleapi"
 	"google.golang.org/api/option"
 
-	"github.com/change-fabric/moose/internal/core"
+	"github.com/change-fabric/moose/internal/drive/core"
 )
 
 // ID is the connector and source id.

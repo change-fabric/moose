@@ -13,7 +13,7 @@ import (
 	"time"
 
 	"github.com/change-fabric/moose/internal/audit"
-	"github.com/change-fabric/moose/internal/core"
+	"github.com/change-fabric/moose/internal/drive/core"
 	"github.com/change-fabric/moose/internal/store"
 )
 

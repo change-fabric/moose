@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"sort"
 
-	"github.com/change-fabric/moose/internal/core"
+	"github.com/change-fabric/moose/internal/drive/core"
 )
 
 // Connector is a live, pass-through view of one data source. It is declared

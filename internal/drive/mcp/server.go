@@ -17,8 +17,8 @@ import (
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/change-fabric/moose/internal/audit"
-	"github.com/change-fabric/moose/internal/connectors/gdrive"
-	"github.com/change-fabric/moose/internal/core"
+	"github.com/change-fabric/moose/internal/drive/connectors/gdrive"
+	"github.com/change-fabric/moose/internal/drive/core"
 )
 
 // Tool names.
