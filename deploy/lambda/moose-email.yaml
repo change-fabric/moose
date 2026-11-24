@@ -14,3 +14,9 @@ email:
   #   MOOSE_EMAIL_BASE_URL            public origin; turns on /connect/google
   #   MOOSE_EMAIL_KMS_KEY_ID          symmetric key that seals refresh tokens
   #   MOOSE_GOOGLE_OAUTH_SECRET_ARN   Secrets Manager secret {client_id, client_secret}
+  # The OAuth 2.1 server that puts /mcp behind a bearer token is required with a public origin:
+  #   MOOSE_EMAIL_OWNER               the tenant owner tokens are issued to
+  #   MOOSE_EMAIL_RP_ID               WebAuthn rp id every receipt must carry
+  #   MOOSE_EMAIL_RECEIPT_PUBLIC_KEY  PEM public key of the approver's receipt signing key
+  #   MOOSE_EMAIL_APPROVER_SECRET_ARN Secrets Manager HMAC key shared with moose-approver
+  #   MOOSE_EMAIL_APPROVER_URL        optional; defaults to MOOSE_EMAIL_BASE_URL

@@ -16,6 +16,7 @@ require (
 	github.com/google/jsonschema-go v0.4.3
 	github.com/ledongthuc/pdf v0.0.0-20261020125853-5e46805f718e
 	github.com/modelcontextprotocol/go-sdk v1.8.0
+	github.com/skip2/go-qrcode v0.0.0-20200617195104-da1b6568686e
 	github.com/spf13/cobra v1.10.2
 	golang.org/x/oauth2 v0.37.0
 	golang.org/x/text v0.44.0

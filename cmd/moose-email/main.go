@@ -21,6 +21,7 @@ import (
 
 	"github.com/change-fabric/moose/internal/config"
 	"github.com/change-fabric/moose/internal/email/connect"
+	"github.com/change-fabric/moose/internal/email/oauthas"
 	"github.com/change-fabric/moose/internal/mcpkit"
 )
 
@@ -58,12 +59,19 @@ func run(log *slog.Logger) error {
 	if err != nil {
 		return err
 	}
-	var mounts []mount
+	var (
+		mounts  []mount
+		protect func(http.Handler) http.Handler
+	)
 	if w != nil {
 		defer w.store.Close()
 		mounts = append(mounts, mount{connect.Prefix, w.connect.Handler()})
+		if w.oauth != nil {
+			mounts = append(mounts, oauthMounts(w.oauth)...)
+			protect = w.oauth.Protect
+		}
 	}
-	h := newHandler(version, mounts...)
+	h := newHandlerAuth(version, protect, mounts...)
 	if os.Getenv("AWS_LAMBDA_RUNTIME_API") != "" {
 		lambda.Start(httpadapter.NewV2(h).ProxyWithContext)
 		return nil
@@ -74,16 +82,39 @@ func run(log *slog.Logger) error {
 	return serve(log, cfg.Listen, h)
 }
 
+// oauthMounts routes the authorization server's paths to it. They match the
+// API Gateway route map: /.well-known/*, /register, /authorize, /authorize/poll
+// and /token.
+func oauthMounts(as *oauthas.Server) []mount {
+	h := as.Handler()
+	var ms []mount
+	for _, p := range []string{"/.well-known/", oauthas.RegisterPath, oauthas.AuthorizePath, oauthas.AuthorizePath + "/", oauthas.TokenPath} {
+		ms = append(ms, mount{p, h})
+	}
+	return ms
+}
+
 // newHandler serves /healthz, the MCP endpoint and any extra mounts (the Google
-// connect page). The MCP server has no tools yet; they arrive with the
-// provider-backed tool phases.
+// connect page), with /mcp open. It is the local development shape; a deployment
+// that runs the OAuth server goes through newHandlerAuth.
 func newHandler(version string, mounts ...mount) http.Handler {
+	return newHandlerAuth(version, nil, mounts...)
+}
+
+// newHandlerAuth is newHandler with protect wrapped around /mcp, which is
+// auth.RequireBearerToken when the OAuth server is configured. The MCP server
+// has no tools yet; they arrive with the provider-backed tool phases.
+func newHandlerAuth(version string, protect func(http.Handler) http.Handler, mounts ...mount) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"ok":true}`))
 	})
-	mux.Handle(mcpkit.Path, mcpkit.Handler(mcpkit.NewServer(serverName, version, nil)))
+	var mcp http.Handler = mcpkit.Handler(mcpkit.NewServer(serverName, version, nil))
+	if protect != nil {
+		mcp = protect(mcp)
+	}
+	mux.Handle(mcpkit.Path, mcp)
 	for _, m := range mounts {
 		mux.Handle(m.pattern, m.handler)
 	}

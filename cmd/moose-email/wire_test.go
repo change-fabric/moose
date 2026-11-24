@@ -14,6 +14,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 
+	"github.com/change-fabric/moose/internal/approver/receipt"
 	"github.com/change-fabric/moose/internal/config"
 	"github.com/change-fabric/moose/internal/email/connect"
 )
@@ -163,4 +164,85 @@ func TestGoogleCredentials(t *testing.T) {
 	if _, _, err := googleCredentials(ctx, config.Email{GoogleSecretARN: arn}, nil); err == nil {
 		t.Error("ARN without a reader accepted")
 	}
+}
+
+func oauthConfig(t *testing.T) config.Config {
+	t.Helper()
+	signer, err := receipt.GenerateLocalSigner()
+	if err != nil {
+		t.Fatal(err)
+	}
+	pub, err := signer.PublicKeyPEM()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := devConfig(t)
+	cfg.Email.Owner, cfg.Email.RPID, cfg.Email.ReceiptPublicKey = "pat", "localhost", string(pub)
+	cfg.Email.ApproverSecret = strings.Repeat("s", 32)
+	return cfg
+}
+
+func TestOAuthProtectsMCPAndServesTheAuthorizationServer(t *testing.T) {
+	w, err := buildConnect(context.Background(), oauthConfig(t), quiet, noAWS)
+	if err != nil || w == nil || w.oauth == nil {
+		t.Fatalf("buildConnect = %v, %v", w, err)
+	}
+	defer w.store.Close()
+	mounts := append([]mount{{connect.Prefix, w.connect.Handler()}}, oauthMounts(w.oauth)...)
+	srv := httptest.NewServer(newHandlerAuth("t", w.oauth.Protect, mounts...))
+	defer srv.Close()
+
+	res, err := http.Post(srv.URL+"/mcp", "application/json", strings.NewReader("{}"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	res.Body.Close()
+	if res.StatusCode != http.StatusUnauthorized || !strings.Contains(res.Header.Get("WWW-Authenticate"), "/.well-known/oauth-protected-resource/mcp") {
+		t.Fatalf("/mcp without a token = %d %q, want 401 pointing at the resource metadata", res.StatusCode, res.Header.Get("WWW-Authenticate"))
+	}
+	for _, p := range []string{"/.well-known/oauth-authorization-server", "/.well-known/oauth-protected-resource/mcp", "/.well-known/oauth-protected-resource"} {
+		res, err = http.Get(srv.URL + p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		res.Body.Close()
+		if res.StatusCode != 200 {
+			t.Errorf("%s = %d, want 200", p, res.StatusCode)
+		}
+	}
+	// register, authorize, poll and token are all routed to the server.
+	res, err = http.Post(srv.URL+"/register", "application/json", strings.NewReader(`{"redirect_uris":["https://claude.ai/api/mcp/auth_callback"]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	res.Body.Close()
+	if res.StatusCode != http.StatusCreated {
+		t.Errorf("/register = %d", res.StatusCode)
+	}
+	for path, want := range map[string]int{"/authorize": 400, "/authorize/poll": 404, "/token": 405, connect.PagePath: 401} {
+		res, err = http.Get(srv.URL + path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		res.Body.Close()
+		if res.StatusCode != want {
+			t.Errorf("GET %s = %d, want %d", path, res.StatusCode, want)
+		}
+	}
+}
+
+func TestOAuthNeedsALongServiceSecret(t *testing.T) {
+	cfg := oauthConfig(t)
+	cfg.Email.ApproverSecret = "short"
+	if _, err := buildConnect(context.Background(), cfg, quiet, noAWS); err == nil || !strings.Contains(err.Error(), "32 bytes") {
+		t.Fatalf("err = %v, want a refusal of a short service secret", err)
+	}
+}
+
+func TestMCPStaysOpenLocallyWithoutOAuth(t *testing.T) {
+	w, err := buildConnect(context.Background(), devConfig(t), quiet, noAWS)
+	if err != nil || w.oauth != nil {
+		t.Fatalf("oauth must be off when email.owner and friends are unset: %v %v", w, err)
+	}
+	w.store.Close()
 }

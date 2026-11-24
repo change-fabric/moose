@@ -83,3 +83,49 @@ func TestEmailConnectRefusalsInProd(t *testing.T) {
 		map[string]string{"MOOSE_EMAIL_DEV_KEY": devKey, "MOOSE_GOOGLE_OAUTH_SECRET_ARN": "arn:x"})
 	wantErr(t, dev.ValidateEmail(), "MOOSE_EMAIL_DEV_KEY is refused")
 }
+
+const testPubKeyPEM = "-----BEGIN PUBLIC KEY-----\nMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE\n-----END PUBLIC KEY-----\n"
+
+func oauthSection(extra string) string {
+	return "email: {provider: gmail, base_url: 'https://x.example', kms_key_id: k, owner: pat, rp_id: x.example, receipt_public_key: \"" +
+		strings.ReplaceAll(testPubKeyPEM, "\n", `\n`) + "\"" + extra + "}\n"
+}
+
+func TestEmailOAuthIsOffUntilConfigured(t *testing.T) {
+	cfg := load(t, "email: {provider: gmail, base_url: 'http://localhost:8080'}\n", map[string]string{
+		"MOOSE_EMAIL_DEV_KEY": devKey, "MOOSE_GOOGLE_CLIENT_ID": "i", "MOOSE_GOOGLE_CLIENT_SECRET": "s"})
+	if err := cfg.ValidateEmail(); err != nil || cfg.Email.OAuthEnabled() {
+		t.Fatalf("OAuth must be opt-in outside prod: %v", err)
+	}
+}
+
+func TestEmailOAuthRequirements(t *testing.T) {
+	google := map[string]string{"MOOSE_GOOGLE_OAUTH_SECRET_ARN": "arn:g"}
+	with := func(k, v string) map[string]string {
+		m := map[string]string{"MOOSE_GOOGLE_OAUTH_SECRET_ARN": "arn:g"}
+		m[k] = v
+		return m
+	}
+	ok := load(t, oauthSection(""), with("MOOSE_EMAIL_APPROVER_SECRET_ARN", "arn:a"))
+	if err := ok.ValidateEmail(); err != nil || !ok.Email.OAuthEnabled() {
+		t.Fatalf("complete OAuth config: %v", err)
+	}
+	wantErr(t, load(t, oauthSection(""), google).ValidateEmail(), "MOOSE_EMAIL_APPROVER_SECRET_ARN")
+	wantErr(t, load(t, oauthSection(""), with("MOOSE_EMAIL_APPROVER_SECRET", "short")).ValidateEmail(), "at least 32")
+	both := with("MOOSE_EMAIL_APPROVER_SECRET", strings.Repeat("s", 32))
+	both["MOOSE_EMAIL_APPROVER_SECRET_ARN"] = "arn:a"
+	wantErr(t, load(t, oauthSection(""), both).ValidateEmail(), "not both")
+	wantErr(t, load(t, strings.Replace(oauthSection(""), "owner: pat, ", "", 1), with("MOOSE_EMAIL_APPROVER_SECRET_ARN", "arn:a")).ValidateEmail(), "email.owner")
+	wantErr(t, load(t, strings.Replace(oauthSection(""), "rp_id: x.example, ", "", 1), with("MOOSE_EMAIL_APPROVER_SECRET_ARN", "arn:a")).ValidateEmail(), "email.rp_id")
+	wantErr(t, load(t, strings.Replace(oauthSection(""), "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE", "x", 1), with("MOOSE_EMAIL_APPROVER_SECRET_ARN", "arn:a")).ValidateEmail(), "receipt_public_key")
+	wantErr(t, load(t, oauthSection(", approver_url: 'nope'"), with("MOOSE_EMAIL_APPROVER_SECRET_ARN", "arn:a")).ValidateEmail(), "approver_url")
+	// A dev HMAC secret is refused in prod.
+	prod := load(t, "env: prod\nstore: {kind: dynamo, dynamo_table: t}\n"+oauthSection(""), with("MOOSE_EMAIL_APPROVER_SECRET", strings.Repeat("s", 32)))
+	wantErr(t, prod.ValidateEmail(), "MOOSE_EMAIL_APPROVER_SECRET is refused")
+}
+
+func TestEmailProdWithAPublicOriginNeedsOAuth(t *testing.T) {
+	cfg := load(t, "env: prod\nstore: {kind: dynamo, dynamo_table: t}\nemail: {provider: gmail, base_url: 'https://x.example', kms_key_id: k}\n",
+		map[string]string{"MOOSE_GOOGLE_OAUTH_SECRET_ARN": "arn:g"})
+	wantErr(t, cfg.ValidateEmail(), "a public /mcp needs the OAuth server")
+}
