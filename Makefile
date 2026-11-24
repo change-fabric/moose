@@ -16,7 +16,7 @@ OTHER_CMDS := $(filter-out $(addprefix cmd/,$(SERVER_CMDS)),$(wildcard cmd/*))
 GOLANGCI_IMAGE ?= golangci/golangci-lint:v2.15.0
 ALLOWED_LICENSES := MIT,BSD-2-Clause,BSD-3-Clause,Apache-2.0,ISC,MPL-2.0
 
-.PHONY: build test vet lint license-check test-store clean link-secrets up down logs ps lambda-drive relay-proxy tf-validate tf-plan e2e
+.PHONY: build test vet lint license-check test-store clean link-secrets up down logs ps lambda-drive lambda-email relay-proxy tf-validate tf-plan e2e
 
 build:
 	CGO_ENABLED=0 $(GO) build -trimpath -ldflags "$(LDFLAGS)" -o dist/ $(addprefix ./,$(OTHER_CMDS))
@@ -84,6 +84,13 @@ lambda-drive:
 	cp deploy/lambda/moose.yaml dist/lambda/moose.yaml
 	rm -f dist/moose-drive-lambda.zip
 	cd dist/lambda && zip -q -X ../moose-drive-lambda.zip bootstrap moose.yaml
+
+lambda-email:
+	mkdir -p dist/lambda-email
+	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 $(GO) build -trimpath -tags lambda.norpc -ldflags "$(LDFLAGS_EMAIL)" -o dist/lambda-email/bootstrap ./cmd/moose-email
+	cp deploy/lambda/moose-email.yaml dist/lambda-email/moose.yaml
+	rm -f dist/moose-email.zip
+	cd dist/lambda-email && zip -q -X ../moose-email.zip bootstrap moose.yaml
 
 relay-proxy:
 	mkdir -p dist
