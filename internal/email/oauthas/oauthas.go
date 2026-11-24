@@ -153,6 +153,8 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle(TokenPath, cors(http.HandlerFunc(s.token)))
 	mux.HandleFunc("GET "+AuthorizePath, s.authorize)
 	mux.HandleFunc("GET "+PollPath, s.poll)
+	mux.HandleFunc("GET "+LoginPath, s.login)
+	mux.HandleFunc("GET "+LoginPollPath, s.loginPoll)
 	return noStore(mux)
 }
 

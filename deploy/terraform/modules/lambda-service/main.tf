@@ -37,7 +37,6 @@ resource "aws_iam_role_policy" "logs" {
 }
 
 resource "aws_iam_role_policy" "extra" {
-  count  = var.policy_json == null ? 0 : 1
   name   = "${var.name}-lambda"
   role   = aws_iam_role.this.id
   policy = var.policy_json

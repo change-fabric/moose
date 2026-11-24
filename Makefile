@@ -16,7 +16,7 @@ OTHER_CMDS := $(filter-out $(addprefix cmd/,$(SERVER_CMDS)),$(wildcard cmd/*))
 GOLANGCI_IMAGE ?= golangci/golangci-lint:v2.15.0
 ALLOWED_LICENSES := MIT,BSD-2-Clause,BSD-3-Clause,Apache-2.0,ISC,MPL-2.0
 
-.PHONY: build test vet lint license-check test-store clean link-secrets up down logs ps lambda-drive lambda-email lambda-approver a11y-approver relay-proxy tf-validate tf-plan e2e
+.PHONY: build test vet lint license-check test-store clean link-secrets up down logs ps lambda-drive lambda-email lambda-approver approver-enroll a11y-approver relay-proxy tf-validate tf-plan e2e
 
 build:
 	CGO_ENABLED=0 $(GO) build -trimpath -ldflags "$(LDFLAGS)" -o dist/ $(addprefix ./,$(OTHER_CMDS))
@@ -100,6 +100,11 @@ lambda-approver:
 	rm -f dist/moose-approver.zip
 	cd dist/lambda-approver && zip -q -X ../moose-approver.zip bootstrap moose.yaml
 
+# Prints the single-use passkey enrollment link for a deployed moose-approver (needs the
+# email root applied and dist/moose-approver from `make build`).
+approver-enroll:
+	./scripts/approver-enroll.sh
+
 # Renders every approver page to HTML, then runs axe-core over them (desktop width and
 # 320px) in the pinned browserless Chromium image. Needs Docker.
 AXE_IMAGE ?= ghcr.io/browserless/chromium:v2.38.1
@@ -112,10 +117,12 @@ relay-proxy:
 	mkdir -p dist
 	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 $(GO) build -trimpath -ldflags "$(LDFLAGS)" -o dist/moose-relay-proxy ./cmd/moose-relay-proxy
 
+# Validation initializes without a backend in its own data dir, so it never disturbs a root
+# that was initialized against the real state bucket (a plan after tf-validate still works).
 tf-validate:
 	@for d in $(TF_DIRS); do \
 	  echo "== $$d"; \
-	  $(TF) -chdir=$$d init -backend=false -input=false >/dev/null && $(TF) -chdir=$$d validate || exit 1; \
+	  TF_DATA_DIR=.terraform-validate $(TF) -chdir=$$d init -backend=false -input=false >/dev/null && TF_DATA_DIR=.terraform-validate $(TF) -chdir=$$d validate || exit 1; \
 	done
 
 tf-plan:

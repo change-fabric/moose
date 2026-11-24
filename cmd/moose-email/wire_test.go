@@ -183,13 +183,14 @@ func oauthConfig(t *testing.T) config.Config {
 }
 
 func TestOAuthProtectsMCPAndServesTheAuthorizationServer(t *testing.T) {
-	w, err := buildConnect(context.Background(), oauthConfig(t), quiet, noAWS)
+	cfg := oauthConfig(t)
+	w, err := buildConnect(context.Background(), cfg, quiet, noAWS)
 	if err != nil || w == nil || w.oauth == nil {
 		t.Fatalf("buildConnect = %v, %v", w, err)
 	}
 	defer w.store.Close()
 	mounts := append([]mount{{connect.Prefix, w.connect.Handler()}}, oauthMounts(w.oauth)...)
-	srv := httptest.NewServer(newHandlerAuth("t", w.oauth.Protect, mounts...))
+	srv := httptest.NewServer(newHandlerAuth("t", w.oauth.Protect, registerTools(w, cfg), mounts...))
 	defer srv.Close()
 
 	res, err := http.Post(srv.URL+"/mcp", "application/json", strings.NewReader("{}"))

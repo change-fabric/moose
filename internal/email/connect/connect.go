@@ -176,7 +176,7 @@ func secure(next http.Handler) http.Handler {
 func (s *Server) owner(w http.ResponseWriter, r *http.Request) (string, bool) {
 	owner, ok := s.d.Auth.Owner(r)
 	if !ok || owner == "" {
-		s.fail(w, http.StatusUnauthorized, "Sign in first", "This page needs a dashboard session. Sign in through the approver, then open it again.")
+		s.fail(w, http.StatusUnauthorized, "Sign in first", "This page needs a dashboard session. Open /connect/login, approve the sign-in on your phone, then come back to this page.")
 		return "", false
 	}
 	return owner, true

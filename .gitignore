@@ -15,3 +15,5 @@ deploy/compose/secrets/
 deploy/compose/moose.yaml
 deploy/terraform/drive/backend.tf
 deploy/terraform/email/backend.tf
+deploy/terraform/*/tf.plan
+.terraform-validate/

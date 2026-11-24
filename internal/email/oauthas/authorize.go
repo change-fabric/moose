@@ -113,7 +113,7 @@ func (s *Server) authorize(w http.ResponseWriter, r *http.Request) {
 		Name: txnCookie, Value: handle, Path: AuthorizePath, MaxAge: int(TxnTTL / time.Second),
 		HttpOnly: true, Secure: !s.d.InsecureCookies, SameSite: http.SameSiteLaxMode,
 	})
-	s.waitPage(w, client.Name, ru.Host, resp.ApprovalURL)
+	s.waitPage(w, client.Name, ru.Host, resp.ApprovalURL, "An application is asking to connect to your moose email.", PollPath)
 }
 
 // resourceFrom checks the RFC 8707 resource indicators. Absent means the one
@@ -179,67 +179,11 @@ type pollResponse struct {
 // transaction (only one poll can), consumes the approval, and answers with the
 // redirect carrying a fresh single-use authorization code.
 func (s *Server) poll(w http.ResponseWriter, r *http.Request) {
-	c, err := r.Cookie(txnCookie)
-	if err != nil || c.Value == "" {
-		writeJSON(w, http.StatusNotFound, pollResponse{Status: "unknown"})
+	txn, ok := s.completeTxn(w, r, txnCookie, AuthorizePath, false)
+	if !ok {
 		return
 	}
-	ctx := r.Context()
-	now := s.d.Now()
-	hash := store.HashSecret(c.Value)
-	txn, err := s.d.Store.GetAuthTxn(ctx, hash, now)
-	if errors.Is(err, store.ErrNotFound) {
-		writeJSON(w, http.StatusNotFound, pollResponse{Status: "unknown"})
-		return
-	}
-	if err != nil {
-		s.d.Log.Error("oauthas: poll load txn", "err", err)
-		writeJSON(w, http.StatusInternalServerError, pollResponse{Status: "error"})
-		return
-	}
-	st, err := s.d.Approver.Status(ctx, txn.RequestID)
-	if err != nil {
-		s.d.Log.Warn("oauthas: poll approver status", "err", err)
-		writeJSON(w, http.StatusOK, pollResponse{Status: "pending", Note: "approval service unreachable"})
-		return
-	}
-	switch st.Status {
-	case "pending":
-		writeJSON(w, http.StatusOK, pollResponse{Status: "pending"})
-		return
-	case "denied", "expired":
-		_, _ = s.d.Store.TakeAuthTxn(ctx, hash, now)
-		s.clearCookie(w)
-		writeJSON(w, http.StatusOK, pollResponse{Status: st.Status})
-		return
-	case "approved":
-	default: // consumed, or anything unknown: this transaction cannot complete
-		writeJSON(w, http.StatusConflict, pollResponse{Status: "rejected"})
-		return
-	}
-	if st.RequestID != txn.RequestID || st.Receipt == nil {
-		writeJSON(w, http.StatusForbidden, pollResponse{Status: "rejected"})
-		return
-	}
-	if err := receipt.Verify(s.d.ReceiptKey, *st.Receipt, receipt.Want{
-		RequestID: txn.RequestID, Kind: api.KindDashboardSession, PayloadSHA256: txn.PayloadSHA256,
-		RPID: s.d.RPID, Now: now,
-	}); err != nil {
-		s.d.Log.Warn("oauthas: poll receipt rejected", "err", err)
-		writeJSON(w, http.StatusForbidden, pollResponse{Status: "rejected"})
-		return
-	}
-	if _, err := s.d.Store.TakeAuthTxn(ctx, hash, now); err != nil {
-		// Another poll took it, or it expired.
-		writeJSON(w, http.StatusNotFound, pollResponse{Status: "unknown"})
-		return
-	}
-	if _, err := s.d.Approver.Consume(ctx, txn.RequestID, "oauth:"+hash); err != nil {
-		s.d.Log.Warn("oauthas: consume approval", "err", err)
-		s.clearCookie(w)
-		writeJSON(w, http.StatusBadGateway, pollResponse{Status: "error", Note: "approval could not be completed; start again"})
-		return
-	}
+	ctx, now := r.Context(), s.d.Now()
 	code := "mac_" + randomToken(32)
 	if err := s.d.Store.CreateAuthCode(ctx, store.AuthCode{
 		Hash: store.HashSecret(code), Owner: txn.Owner, ClientID: txn.ClientID, RedirectURI: txn.RedirectURI,
@@ -262,12 +206,83 @@ func (s *Server) poll(w http.ResponseWriter, r *http.Request) {
 	}
 	q.Set("iss", s.issuer)
 	u.RawQuery = q.Encode()
-	s.clearCookie(w)
+	s.clearCookie(w, txnCookie, AuthorizePath)
 	writeJSON(w, http.StatusOK, pollResponse{Status: "approved", Redirect: u.String()})
 }
 
-func (s *Server) clearCookie(w http.ResponseWriter) {
-	http.SetCookie(w, &http.Cookie{Name: txnCookie, Value: "", Path: AuthorizePath, MaxAge: -1,
+// completeTxn is the part of a poll the OAuth login and the dashboard login
+// share. It writes the response itself and returns false unless the approver
+// has approved the transaction named by the browser's cookie, the receipt
+// verifies, this poll took the transaction and the approval was consumed.
+// dashboard says which kind of transaction the endpoint serves, so a handle
+// from one flow never completes the other.
+func (s *Server) completeTxn(w http.ResponseWriter, r *http.Request, cookie, cookiePath string, dashboard bool) (store.AuthTxn, bool) {
+	c, err := r.Cookie(cookie)
+	if err != nil || c.Value == "" {
+		writeJSON(w, http.StatusNotFound, pollResponse{Status: "unknown"})
+		return store.AuthTxn{}, false
+	}
+	ctx := r.Context()
+	now := s.d.Now()
+	hash := store.HashSecret(c.Value)
+	txn, err := s.d.Store.GetAuthTxn(ctx, hash, now)
+	if errors.Is(err, store.ErrNotFound) || (err == nil && (txn.ClientID == DashboardClientID) != dashboard) {
+		writeJSON(w, http.StatusNotFound, pollResponse{Status: "unknown"})
+		return store.AuthTxn{}, false
+	}
+	if err != nil {
+		s.d.Log.Error("oauthas: poll load txn", "err", err)
+		writeJSON(w, http.StatusInternalServerError, pollResponse{Status: "error"})
+		return store.AuthTxn{}, false
+	}
+	st, err := s.d.Approver.Status(ctx, txn.RequestID)
+	if err != nil {
+		s.d.Log.Warn("oauthas: poll approver status", "err", err)
+		writeJSON(w, http.StatusOK, pollResponse{Status: "pending", Note: "approval service unreachable"})
+		return store.AuthTxn{}, false
+	}
+	switch st.Status {
+	case "pending":
+		writeJSON(w, http.StatusOK, pollResponse{Status: "pending"})
+		return store.AuthTxn{}, false
+	case "denied", "expired":
+		_, _ = s.d.Store.TakeAuthTxn(ctx, hash, now)
+		s.clearCookie(w, cookie, cookiePath)
+		writeJSON(w, http.StatusOK, pollResponse{Status: st.Status})
+		return store.AuthTxn{}, false
+	case "approved":
+	default: // consumed, or anything unknown: this transaction cannot complete
+		writeJSON(w, http.StatusConflict, pollResponse{Status: "rejected"})
+		return store.AuthTxn{}, false
+	}
+	if st.RequestID != txn.RequestID || st.Receipt == nil {
+		writeJSON(w, http.StatusForbidden, pollResponse{Status: "rejected"})
+		return store.AuthTxn{}, false
+	}
+	if err := receipt.Verify(s.d.ReceiptKey, *st.Receipt, receipt.Want{
+		RequestID: txn.RequestID, Kind: api.KindDashboardSession, PayloadSHA256: txn.PayloadSHA256,
+		RPID: s.d.RPID, Now: now,
+	}); err != nil {
+		s.d.Log.Warn("oauthas: poll receipt rejected", "err", err)
+		writeJSON(w, http.StatusForbidden, pollResponse{Status: "rejected"})
+		return store.AuthTxn{}, false
+	}
+	if _, err := s.d.Store.TakeAuthTxn(ctx, hash, now); err != nil {
+		// Another poll took it, or it expired.
+		writeJSON(w, http.StatusNotFound, pollResponse{Status: "unknown"})
+		return store.AuthTxn{}, false
+	}
+	if _, err := s.d.Approver.Consume(ctx, txn.RequestID, "oauth:"+hash); err != nil {
+		s.d.Log.Warn("oauthas: consume approval", "err", err)
+		s.clearCookie(w, cookie, cookiePath)
+		writeJSON(w, http.StatusBadGateway, pollResponse{Status: "error", Note: "approval could not be completed; start again"})
+		return store.AuthTxn{}, false
+	}
+	return txn, true
+}
+
+func (s *Server) clearCookie(w http.ResponseWriter, name, path string) {
+	http.SetCookie(w, &http.Cookie{Name: name, Value: "", Path: path, MaxAge: -1,
 		HttpOnly: true, Secure: !s.d.InsecureCookies, SameSite: http.SameSiteLaxMode})
 }
 
@@ -288,7 +303,7 @@ dl{margin:0;display:grid;grid-template-columns:auto 1fr;gap:.25rem 1rem}dt{color
 a{color:var(--acc)}#status{font-weight:600}
 </style></head><body><main>
 <h1>Approve this sign-in on your phone</h1>
-<p>An application is asking to connect to your moose email. Scan the code with your phone, check the details, and approve with your passkey.</p>
+<p>{{.Lead}} Scan the code with your phone, check the details, and approve with your passkey.</p>
 <div class="card"><dl><dt>Application</dt><dd>{{.Client}}</dd><dt>Returns to</dt><dd>{{.Host}}</dd></dl></div>
 <div class="qr">{{.QR}}</div>
 <p>No camera handy? <a href="{{.URL}}" rel="noopener noreferrer" target="_blank">Open the approval page</a> on a device that holds your passkey.</p>
@@ -328,7 +343,7 @@ func (s *Server) pageHeaders(w http.ResponseWriter, nonce string) {
 	h.Set("X-Frame-Options", "DENY")
 }
 
-func (s *Server) waitPage(w http.ResponseWriter, client, host, approvalURL string) {
+func (s *Server) waitPage(w http.ResponseWriter, client, host, approvalURL, lead, poll string) {
 	nonce := randomToken(16)
 	qr, err := qrSVG(approvalURL)
 	if err != nil {
@@ -339,7 +354,7 @@ func (s *Server) waitPage(w http.ResponseWriter, client, host, approvalURL strin
 	var buf bytes.Buffer
 	err = pageTmpl.Execute(&buf, map[string]any{
 		"Client": client, "Host": host, "URL": approvalURL, "QR": template.HTML(qr), //nolint:gosec // generated here from a bit matrix
-		"Nonce": nonce, "Poll": PollPath,
+		"Nonce": nonce, "Poll": poll, "Lead": lead,
 	})
 	if err != nil {
 		s.d.Log.Error("oauthas: render page", "err", err)

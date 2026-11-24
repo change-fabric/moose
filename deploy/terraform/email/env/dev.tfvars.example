@@ -1,5 +1,0 @@
-# Copy to env/dev.tfvars (gitignored).
-env             = "dev"
-region          = "us-east-1"
-domain_name     = "moose.changefabric.org"
-route53_zone_id = "Z08930502G3I2NZWQ3V7K"
