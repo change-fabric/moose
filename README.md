@@ -57,6 +57,9 @@ Drive-specific code lives under `internal/drive`; shared packages stay at the to
 | `internal/drive/api` | Drive REST API router |
 | `internal/server` | Auth and audit around a connector's mounts |
 | `internal/mcpkit` | Shared MCP server construction, tool annotations, untrusted-content wrapper |
+| `internal/email/provider` | Provider-neutral mailbox interface, search `Query`, `Capabilities` |
+| `internal/email/gmail` | Gmail provider: query compiler and REST client |
+| `internal/email/fake` | In-memory provider for tests |
 | `internal/bootstrap`, `internal/config` | Startup wiring, configuration |
 | `internal/auth`, `internal/store`, `internal/audit` | Identity and tokens, storage backends, audit log |
 | `internal/cli` | The `moose` CLI |
