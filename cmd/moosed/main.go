@@ -22,6 +22,7 @@ import (
 	"github.com/change-fabric/moose/internal/auth"
 	"github.com/change-fabric/moose/internal/bootstrap"
 	"github.com/change-fabric/moose/internal/config"
+	"github.com/change-fabric/moose/internal/drive/wiring"
 )
 
 // version is set at build time with -ldflags "-X main.version=...".
@@ -49,6 +50,9 @@ func run(log *slog.Logger) error {
 
 	cfg, err := config.Load(os.Getenv)
 	if err != nil {
+		return err
+	}
+	if err := cfg.ValidateDrive(); err != nil {
 		return err
 	}
 
@@ -96,14 +100,18 @@ func run(log *slog.Logger) error {
 	}
 	defer ln.Close()
 
-	rt, err := bootstrap.FromEnv(ctx, bootstrap.Options{Logger: log, Identity: idSrc})
+	rt, err := bootstrap.FromEnv(ctx, bootstrap.Options{Logger: log, Identity: idSrc, Validate: config.Config.ValidateDrive})
 	if err != nil {
 		return err
 	}
 	defer rt.Store.Close()
 
+	handler, err := wiring.Handler(ctx, rt, version)
+	if err != nil {
+		return err
+	}
 	srv := &http.Server{
-		Handler:           rt.Handler(version),
+		Handler:           handler,
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       2 * time.Minute,
 	}
