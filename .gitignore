@@ -13,4 +13,5 @@ deploy/compose/secrets/
 *.tfvars
 !*.tfvars.example
 deploy/compose/moose.yaml
-deploy/terraform/aws/backend.tf
+deploy/terraform/drive/backend.tf
+deploy/terraform/email/backend.tf

@@ -39,6 +39,6 @@ jobs:
         with:
           terraform_version: 1.15.8
       - name: Format
-        run: terraform -chdir=deploy/terraform/aws fmt -check -recursive
+        run: terraform -chdir=deploy/terraform fmt -check -recursive
       - name: Validate
         run: make tf-validate

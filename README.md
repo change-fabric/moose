@@ -84,7 +84,7 @@ tsnet state lives in the `moose-data` volume, so only the first boot needs the a
 
 ## AWS
 
-Terraform root in [`deploy/terraform/aws`](deploy/terraform/aws): a Go Lambda (`provided.al2023`, arm64, outside any VPC) behind a private REST API Gateway that accepts traffic only from one execute-api VPC endpoint, DynamoDB on demand, Secrets Manager, and a t4g.nano relay EC2. The relay runs Tailscale as a subnet router (`tag:moose-relay`) and `tailscale serve` in front of `moose-relay-proxy`, which forwards to the API with a shared secret. The Lambda trusts the `Tailscale-User-Login` header only alongside that secret. Clients use the same `https://moose.<tailnet>.ts.net/mcp` URL as on the Mac Mini (set `relay_hostname = "moose-aws"` if both run in one tailnet).
+Terraform root in [`deploy/terraform/drive`](deploy/terraform/drive): a Go Lambda (`provided.al2023`, arm64, outside any VPC) behind a private REST API Gateway that accepts traffic only from one execute-api VPC endpoint, DynamoDB on demand, Secrets Manager, and a t4g.nano relay EC2. The relay runs Tailscale as a subnet router (`tag:moose-relay`) and `tailscale serve` in front of `moose-relay-proxy`, which forwards to the API with a shared secret. The Lambda trusts the `Tailscale-User-Login` header only alongside that secret. Clients use the same `https://moose.<tailnet>.ts.net/mcp` URL as on the Mac Mini (set `relay_hostname = "moose-aws"` if both run in one tailnet).
 
 1. Create an S3 bucket for state, copy `backend.tf.example` to `backend.tf` (gitignored), and set the bucket name. Copy `env/dev.tfvars.example` to `env/dev.tfvars` and set `tailnet` and `bootstrap_admin`.
 2. Paste the ACL snippet (step 3 of the Mac Mini section), including `tagOwners` for `tag:moose-relay`. Export Tailscale API credentials as `TAILSCALE_OAUTH_CLIENT_ID` and `TAILSCALE_OAUTH_CLIENT_SECRET` (or `TAILSCALE_API_KEY`), plus your AWS credentials.
@@ -92,9 +92,9 @@ Terraform root in [`deploy/terraform/aws`](deploy/terraform/aws): a Go Lambda (`
 
    ```sh
    make lambda-drive relay-proxy
-   terraform -chdir=deploy/terraform/aws init
+   terraform -chdir=deploy/terraform/drive init
    make tf-plan
-   terraform -chdir=deploy/terraform/aws apply -var-file=env/dev.tfvars
+   terraform -chdir=deploy/terraform/drive apply -var-file=env/dev.tfvars
    ```
 
 4. Put the secret values. Terraform creates only the empty secrets, so key material never enters state:

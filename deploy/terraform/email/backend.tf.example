@@ -1,0 +1,12 @@
+# Copy to backend.tf (gitignored). The state bucket is created outside moose and
+# this root never creates it. There is no DynamoDB lock table: use_lockfile
+# needs Terraform >= 1.10. Confirm the region against the bucket.
+terraform {
+  backend "s3" {
+    bucket       = "changefabric-tfstate-554340864373"
+    key          = "moose/email/terraform.tfstate"
+    region       = "us-east-1"
+    profile      = "change-fabric"
+    use_lockfile = true
+  }
+}
