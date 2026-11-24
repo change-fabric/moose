@@ -1,11 +1,11 @@
 # Mac Mini deployment. No ports are published: tsnet is the only ingress.
 name: moose
 services:
-  moosed:
+  moose-drive:
     build:
       context: ../..
       dockerfile: deploy/compose/Dockerfile
-    image: moose/moosed:local
+    image: moose/moose-drive:local
     restart: unless-stopped
     env_file:
       - path: .env

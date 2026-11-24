@@ -1,5 +1,5 @@
 // Package server composes auditing, authentication, and a connector's mounts
-// into the one http.Handler both runtime shapes (moosed and the Lambda)
+// into the one http.Handler both runtime shapes (moose-drive and the Lambda)
 // serve. It knows nothing about any connector; each supplies its own mounts.
 package server
 

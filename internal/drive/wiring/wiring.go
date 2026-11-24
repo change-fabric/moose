@@ -1,6 +1,6 @@
 // Package wiring assembles the Drive server from a bootstrap.Runtime: the
 // connectors, the core service, and the HTTP handler. The Drive cmds
-// (moosed and moose-lambda) share it.
+// (moose-drive and moose-drive-lambda) share it.
 package wiring
 
 import (

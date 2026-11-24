@@ -6,7 +6,7 @@ LDFLAGS := -s -w -X main.version=$(VERSION)
 GOLANGCI_IMAGE ?= golangci/golangci-lint:v2.15.0
 ALLOWED_LICENSES := MIT,BSD-2-Clause,BSD-3-Clause,Apache-2.0,ISC,MPL-2.0
 
-.PHONY: build test vet lint license-check test-store clean link-secrets up down logs ps lambda relay-proxy tf-validate tf-plan e2e
+.PHONY: build test vet lint license-check test-store clean link-secrets up down logs ps lambda-drive relay-proxy tf-validate tf-plan e2e
 
 build:
 	CGO_ENABLED=0 $(GO) build -trimpath -ldflags "$(LDFLAGS)" -o dist/ ./cmd/...
@@ -55,7 +55,7 @@ down:
 	$(COMPOSE) down
 
 logs:
-	$(COMPOSE) logs -f moosed
+	$(COMPOSE) logs -f moose-drive
 
 ps:
 	$(COMPOSE) ps
@@ -65,12 +65,12 @@ TF ?= terraform
 TF_DIR := deploy/terraform/aws
 
 # The zip step runs on the host and bundles deploy/lambda/moose.yaml.
-lambda:
+lambda-drive:
 	mkdir -p dist/lambda
-	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 $(GO) build -trimpath -tags lambda.norpc -ldflags "$(LDFLAGS)" -o dist/lambda/bootstrap ./cmd/moose-lambda
+	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 $(GO) build -trimpath -tags lambda.norpc -ldflags "$(LDFLAGS)" -o dist/lambda/bootstrap ./cmd/moose-drive-lambda
 	cp deploy/lambda/moose.yaml dist/lambda/moose.yaml
-	rm -f dist/moose-lambda.zip
-	cd dist/lambda && zip -q -X ../moose-lambda.zip bootstrap moose.yaml
+	rm -f dist/moose-drive-lambda.zip
+	cd dist/lambda && zip -q -X ../moose-drive-lambda.zip bootstrap moose.yaml
 
 relay-proxy:
 	mkdir -p dist

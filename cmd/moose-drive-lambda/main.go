@@ -1,4 +1,4 @@
-// Command moose-lambda serves the moose http.Handler from AWS Lambda behind a
+// Command moose-drive-lambda serves the moose http.Handler from AWS Lambda behind a
 // private REST API Gateway. Requests arrive from the Tailscale relay EC2, and
 // caller identity comes from the tailscale serve headers it forwards, trusted
 // only alongside the relay shared secret.
@@ -34,7 +34,7 @@ func main() {
 	ctx := context.Background()
 	h, err := newHandler(ctx, log)
 	if err != nil {
-		log.Error("moose-lambda init failed", "err", err)
+		log.Error("moose-drive-lambda init failed", "err", err)
 		os.Exit(1)
 	}
 	lambda.Start(proxy(h))

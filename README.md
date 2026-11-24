@@ -37,7 +37,7 @@ Run a local dev hub on plain HTTP with a fixed identity (refused when `MOOSE_ENV
 
 ```sh
 MOOSE_ENV=dev MOOSE_LISTEN=127.0.0.1:8787 MOOSE_DEV_IDENTITY=me@example.com \
-  MOOSE_BOOTSTRAP_ADMIN=me@example.com ./scripts/go run ./cmd/moosed
+  MOOSE_BOOTSTRAP_ADMIN=me@example.com ./scripts/go run ./cmd/moose-drive
 export MOOSE_CREDENTIALS=/src/dist/dev-credentials.json
 ./scripts/go run ./cmd/moose token bootstrap --url http://127.0.0.1:8787 --name dev
 ./scripts/go run ./cmd/moose whoami
@@ -63,7 +63,7 @@ Drive-specific code lives under `internal/drive`; shared packages stay at the to
 
 ## Mac Mini
 
-Docker Compose plus the Makefile; no Terraform and no published ports. `moosed` joins the tailnet with tsnet as node `moose` and serves `https://moose.<tailnet>.ts.net`.
+Docker Compose plus the Makefile; no Terraform and no published ports. `moose-drive` joins the tailnet with tsnet as node `moose` and serves `https://moose.<tailnet>.ts.net`.
 
 1. Create a GCP project, enable the Drive API, and create a service account. Download its JSON key to `~/.config/moose/secrets/gdrive-sa.json`.
 2. Share the Drive folders moose should see with the service account's email. That sharing is the only access control on content.
@@ -91,7 +91,7 @@ Terraform root in [`deploy/terraform/aws`](deploy/terraform/aws): a Go Lambda (`
 3. Build the artifacts and apply. The bundled Lambda config is [`deploy/lambda/moose.yaml`](deploy/lambda/moose.yaml).
 
    ```sh
-   make lambda relay-proxy
+   make lambda-drive relay-proxy
    terraform -chdir=deploy/terraform/aws init
    make tf-plan
    terraform -chdir=deploy/terraform/aws apply -var-file=env/dev.tfvars
