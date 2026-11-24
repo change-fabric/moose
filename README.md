@@ -63,7 +63,12 @@ Drive-specific code lives under `internal/drive`; shared packages stay at the to
 | `internal/email/store` | Email store: accounts, OAuth state, approvals, send ledger, per-account contacts, audit. Business rules once on a small `Backend`; `dynamo` and `sqlite` backends, `storetest` conformance suites |
 | `internal/email/envelope` | KMS envelope sealing (encryption context `{owner, account_id}`) with a local dev-key mode |
 | `internal/email/connect` | The `/connect/google` page: Google OAuth web flow, account rows, send enable and disable |
-| `internal/email/palette` | The 12 curated account colours |
+| `internal/email/palette` | The 12 curated account colours (every pair at CIE76 deltaE 20 or more under protan, deutan and tritan) |
+| `internal/approver/api` | moose-approver service API: HMAC-signed create (idempotent by key), status, consume; payload and preview types; the client moose-email uses |
+| `internal/approver/receipt` | KMS P-256 approval receipts and `Verify(pubkey, receipt, want)` |
+| `internal/approver/webauthn` | Passkey ceremonies: user verification required, single-use challenges bound to request and payload digest, hashed enrollment tokens; `webauthntest` is a virtual authenticator |
+| `internal/approver/store` | Approval requests, sealed previews (deleted on deny, expiry and consume), challenges, credentials |
+| `internal/approver/pages` | Server-rendered approval pages: FROM banner with look-alike warning, batch approval, queue, enrollment |
 | `internal/bootstrap`, `internal/config` | Startup wiring, configuration |
 | `internal/auth`, `internal/store`, `internal/audit` | Identity and tokens, storage backends, audit log |
 | `internal/cli` | The `moose` CLI |
@@ -176,6 +181,16 @@ git tag email/v0.1.0 && git push origin email/v0.1.0
 ```
 
 CI checks out full history and tags so these versions resolve. Override a version with `make build VERSION_DRIVE=1.2.3`.
+
+## moose-approver
+
+`moose-approver` is the passkey approval service that `moose-email` asks before anything irreversible: sending mail, enabling send on an account, trusting contacts, signing in to the dashboard. It rides the `email/v*` version line and has its own table, its own KMS keys and its own rpId.
+
+- `moose-approver enroll` prints a link that enrolls the first passkey. The token is stored only as a sha256, works once and expires in 15 minutes.
+- `moose-approver pubkey` prints the receipt public key to pin in moose-email. `moose-approver sweep` expires overdue requests and deletes their previews; on Lambda an EventBridge schedule runs it.
+- Config: the `approver:` section (`rp_id`, `origin`, `owner`, `signing_key_id`, `kms_key_id`) plus `MOOSE_APPROVER_HMAC_SECRET_ARN`. For local runs set `MOOSE_APPROVER_DEV_KEY` (base64, 32 bytes) and `MOOSE_APPROVER_HMAC_SECRET` (32+ characters); without a signing key the dev server makes an ephemeral one and logs its public key.
+- `make lambda-approver` builds the Lambda zip. `make a11y-approver` renders every page and runs axe-core over them in a browserless Chromium container (needs Docker).
+- Routes for API Gateway: `/approve/r/{proxy+}`, `/approve/register/{proxy+}`, `/approve/api/{proxy+}` and `/approve/queue` with `/approve/queue/{proxy+}`.
 
 ## License
 

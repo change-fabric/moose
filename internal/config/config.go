@@ -124,6 +124,24 @@ type EmailSend struct {
 type Approver struct {
 	RPID   string `yaml:"rp_id"`
 	Origin string `yaml:"origin"`
+	// Owner is the single tenant owner whose passkeys approve requests and
+	// whose requests the service accepts.
+	Owner string `yaml:"owner"`
+	// SigningKeyID is the asymmetric ECC_NIST_P256 KMS key that signs receipts.
+	SigningKeyID string `yaml:"signing_key_id"`
+	// KMSKeyID is the symmetric KMS key that wraps the data keys sealing previews.
+	KMSKeyID string `yaml:"kms_key_id"`
+
+	// Env-only settings (secrets).
+	// HMACSecretARN names the Secrets Manager secret shared with moose-email
+	// that authenticates the service API; HMACSecret is the dev alternative.
+	HMACSecretARN string `yaml:"-"`
+	HMACSecret    string `yaml:"-"`
+	// DevKey (base64, 32 bytes) stands in for the symmetric KMS key in dev.
+	DevKey string `yaml:"-"`
+	// DevSigningKey is a PEM EC private key standing in for the KMS signing key
+	// in dev; when empty in dev, an ephemeral key is generated at start.
+	DevSigningKey string `yaml:"-"`
 }
 
 // Default returns the built-in defaults. Per-server sections are nil: a
@@ -193,6 +211,17 @@ func applyEnv(cfg *Config, getenv func(string) string) {
 		set(&cfg.Email.GoogleSecretARN, "MOOSE_GOOGLE_OAUTH_SECRET_ARN")
 		set(&cfg.Email.GoogleClientID, "MOOSE_GOOGLE_CLIENT_ID")
 		set(&cfg.Email.GoogleClientSecret, "MOOSE_GOOGLE_CLIENT_SECRET")
+	}
+	if cfg.Approver != nil {
+		set(&cfg.Approver.RPID, "MOOSE_APPROVER_RP_ID")
+		set(&cfg.Approver.Origin, "MOOSE_APPROVER_ORIGIN")
+		set(&cfg.Approver.Owner, "MOOSE_APPROVER_OWNER")
+		set(&cfg.Approver.SigningKeyID, "MOOSE_APPROVER_SIGNING_KEY_ID")
+		set(&cfg.Approver.KMSKeyID, "MOOSE_APPROVER_KMS_KEY_ID")
+		set(&cfg.Approver.HMACSecretARN, "MOOSE_APPROVER_HMAC_SECRET_ARN")
+		set(&cfg.Approver.HMACSecret, "MOOSE_APPROVER_HMAC_SECRET")
+		set(&cfg.Approver.DevKey, "MOOSE_APPROVER_DEV_KEY")
+		set(&cfg.Approver.DevSigningKey, "MOOSE_APPROVER_DEV_SIGNING_KEY")
 	}
 	if v := getenv("MOOSE_DYNAMO_TABLE"); v != "" {
 		cfg.Store.DynamoTable = v
@@ -341,6 +370,54 @@ func (c Config) ValidateApprover() error {
 		errs = append(errs, errors.New("approver.origin is required"))
 	case c.Env == EnvProd && !strings.HasPrefix(a.Origin, "https://"):
 		errs = append(errs, fmt.Errorf("approver.origin %q must start with https:// when env is prod", a.Origin))
+	}
+	return joinErrs(errs)
+}
+
+// ValidateApproverServe checks what moose-approver needs to serve requests, on
+// top of ValidateApprover: the owner, a receipt signing key, a key to seal
+// previews and the service API secret. Production takes the keys from KMS and
+// the secret from Secrets Manager and refuses the dev alternatives.
+func (c Config) ValidateApproverServe() error {
+	if err := c.ValidateApprover(); err != nil {
+		return err
+	}
+	a := c.Approver
+	var errs []error
+	if a.Owner == "" {
+		errs = append(errs, errors.New("approver.owner (or MOOSE_APPROVER_OWNER) is required"))
+	}
+	if u, err := url.Parse(a.Origin); err != nil || u.Host == "" || u.Path != "" && u.Path != "/" || u.RawQuery != "" || u.Fragment != "" {
+		errs = append(errs, fmt.Errorf("approver.origin %q must be an origin with no path", a.Origin))
+	}
+	switch {
+	case a.KMSKeyID == "" && a.DevKey == "":
+		errs = append(errs, errors.New("approver.kms_key_id (or MOOSE_APPROVER_DEV_KEY in dev) is required to seal previews"))
+	case a.KMSKeyID != "" && a.DevKey != "":
+		errs = append(errs, errors.New("set approver.kms_key_id or MOOSE_APPROVER_DEV_KEY, not both"))
+	case a.DevKey != "":
+		if k, err := base64.StdEncoding.DecodeString(a.DevKey); err != nil || len(k) != 32 {
+			errs = append(errs, errors.New("MOOSE_APPROVER_DEV_KEY must be 32 bytes, base64 encoded"))
+		}
+	}
+	if a.SigningKeyID != "" && a.DevSigningKey != "" {
+		errs = append(errs, errors.New("set approver.signing_key_id or MOOSE_APPROVER_DEV_SIGNING_KEY, not both"))
+	}
+	switch {
+	case a.HMACSecretARN == "" && a.HMACSecret == "":
+		errs = append(errs, errors.New("MOOSE_APPROVER_HMAC_SECRET_ARN (or MOOSE_APPROVER_HMAC_SECRET in dev) is required"))
+	case a.HMACSecretARN != "" && a.HMACSecret != "":
+		errs = append(errs, errors.New("set MOOSE_APPROVER_HMAC_SECRET_ARN or MOOSE_APPROVER_HMAC_SECRET, not both"))
+	case a.HMACSecret != "" && len(a.HMACSecret) < 32:
+		errs = append(errs, errors.New("MOOSE_APPROVER_HMAC_SECRET must be at least 32 characters"))
+	}
+	if c.Env == EnvProd {
+		if a.SigningKeyID == "" {
+			errs = append(errs, errors.New("approver.signing_key_id is required when env is prod"))
+		}
+		if a.KMSKeyID == "" || a.DevKey != "" || a.DevSigningKey != "" || a.HMACSecret != "" {
+			errs = append(errs, errors.New("prod needs approver.kms_key_id and MOOSE_APPROVER_HMAC_SECRET_ARN, and refuses the MOOSE_APPROVER_DEV_* and MOOSE_APPROVER_HMAC_SECRET settings"))
+		}
 	}
 	return joinErrs(errs)
 }

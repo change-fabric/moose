@@ -5,8 +5,8 @@
 //
 // Account 13 onward reuses a colour with a different pattern overlay, so the
 // pair (colour, pattern) stays distinct without a hue to rely on. The colour
-// vision deficiency checks on this table belong to the approver phase, which
-// owns the banner.
+// vision deficiency check on this table (every pair at CIE76 deltaE 20 or more
+// under normal vision, protanopia, deutanopia and tritanopia) is cvd_test.go.
 package palette
 
 // Color is one palette entry.
@@ -21,18 +21,18 @@ type Color struct {
 var Patterns = []string{"none", "stripes", "dots", "checks"}
 
 var colors = []Color{
-	{"Blue", "#0b5cad", "#ffffff"},
-	{"Vermilion", "#b8340b", "#ffffff"},
-	{"Teal", "#00695c", "#ffffff"},
-	{"Amber", "#ffb000", "#1a1a1a"},
-	{"Plum", "#7b2d8e", "#ffffff"},
-	{"Sky", "#7fc8f8", "#1a1a1a"},
-	{"Forest", "#2e6b1f", "#ffffff"},
-	{"Rose", "#e8a0bf", "#1a1a1a"},
-	{"Slate", "#44546a", "#ffffff"},
-	{"Gold", "#c9b200", "#1a1a1a"},
-	{"Brown", "#6d4326", "#ffffff"},
-	{"Mint", "#8ad9b1", "#1a1a1a"},
+	{"Blue", "#1010f8", "#ffffff"},
+	{"Crimson", "#a00000", "#ffffff"},
+	{"Yellow", "#f0e800", "#1a1a1a"},
+	{"Jade", "#48a078", "#1a1a1a"},
+	{"Violet", "#6000a0", "#ffffff"},
+	{"Orange", "#e07828", "#1a1a1a"},
+	{"Cyan", "#60f8f8", "#1a1a1a"},
+	{"Orchid", "#a04890", "#ffffff"},
+	{"Navy", "#100840", "#ffffff"},
+	{"Lime", "#b8f098", "#1a1a1a"},
+	{"Maroon", "#500010", "#ffffff"},
+	{"Lavender", "#c088f8", "#1a1a1a"},
 }
 
 // Len is the number of distinct colours.

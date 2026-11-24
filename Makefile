@@ -11,17 +11,18 @@ LDFLAGS := -s -w -X main.version=$(VERSION)
 LDFLAGS_DRIVE := -s -w -X main.version=$(VERSION_DRIVE)
 LDFLAGS_EMAIL := -s -w -X main.version=$(VERSION_EMAIL)
 # Server binaries get their own version; everything else under cmd/ uses LDFLAGS.
-SERVER_CMDS := moose-drive moose-drive-lambda moose-email moose-email-lambda
+SERVER_CMDS := moose-drive moose-drive-lambda moose-email moose-email-lambda moose-approver
 OTHER_CMDS := $(filter-out $(addprefix cmd/,$(SERVER_CMDS)),$(wildcard cmd/*))
 GOLANGCI_IMAGE ?= golangci/golangci-lint:v2.15.0
 ALLOWED_LICENSES := MIT,BSD-2-Clause,BSD-3-Clause,Apache-2.0,ISC,MPL-2.0
 
-.PHONY: build test vet lint license-check test-store clean link-secrets up down logs ps lambda-drive lambda-email relay-proxy tf-validate tf-plan e2e
+.PHONY: build test vet lint license-check test-store clean link-secrets up down logs ps lambda-drive lambda-email lambda-approver a11y-approver relay-proxy tf-validate tf-plan e2e
 
 build:
 	CGO_ENABLED=0 $(GO) build -trimpath -ldflags "$(LDFLAGS)" -o dist/ $(addprefix ./,$(OTHER_CMDS))
 	CGO_ENABLED=0 $(GO) build -trimpath -ldflags "$(LDFLAGS_DRIVE)" -o dist/ ./cmd/moose-drive ./cmd/moose-drive-lambda
 	@if [ -d cmd/moose-email ]; then CGO_ENABLED=0 $(GO) build -trimpath -ldflags "$(LDFLAGS_EMAIL)" -o dist/ ./cmd/moose-email; fi
+	@if [ -d cmd/moose-approver ]; then CGO_ENABLED=0 $(GO) build -trimpath -ldflags "$(LDFLAGS_EMAIL)" -o dist/ ./cmd/moose-approver; fi
 
 test:
 	$(GO) test ./...
@@ -39,7 +40,7 @@ DDB_PORT ?= 18000
 test-store:
 	docker run -d --rm --name moose-ddb-test -p $(DDB_PORT):8000 $(DDB_IMAGE) >/dev/null && \
 	for i in $$(seq 1 60); do curl -s -o /dev/null http://localhost:$(DDB_PORT)/ && break; sleep 1; done && \
-	MOOSE_DYNAMO_ENDPOINT=http://localhost:$(DDB_PORT) $(GO) test -count=1 ./internal/store/... ./internal/email/store/... ; \
+	MOOSE_DYNAMO_ENDPOINT=http://localhost:$(DDB_PORT) $(GO) test -count=1 ./internal/store/... ./internal/email/store/... ./internal/approver/store/... ; \
 	rc=$$?; docker stop moose-ddb-test >/dev/null; exit $$rc
 
 # modernc.org/mathutil is BSD-3-Clause, but its LICENSE wording defeats the go-licenses classifier.
@@ -91,6 +92,21 @@ lambda-email:
 	cp deploy/lambda/moose-email.yaml dist/lambda-email/moose.yaml
 	rm -f dist/moose-email.zip
 	cd dist/lambda-email && zip -q -X ../moose-email.zip bootstrap moose.yaml
+
+lambda-approver:
+	mkdir -p dist/lambda-approver
+	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 $(GO) build -trimpath -tags lambda.norpc -ldflags "$(LDFLAGS_EMAIL)" -o dist/lambda-approver/bootstrap ./cmd/moose-approver
+	cp deploy/lambda/moose-approver.yaml dist/lambda-approver/moose.yaml
+	rm -f dist/moose-approver.zip
+	cd dist/lambda-approver && zip -q -X ../moose-approver.zip bootstrap moose.yaml
+
+# Renders every approver page to HTML, then runs axe-core over them (desktop width and
+# 320px) in the pinned browserless Chromium image. Needs Docker.
+AXE_IMAGE ?= ghcr.io/browserless/chromium:v2.38.1
+a11y-approver:
+	rm -rf dist/axe && mkdir -p dist/axe
+	MOOSE_AXE_DUMP=../../dist/axe $(GO) test -count=1 -run TestDumpPagesForAxe ./internal/approver/
+	docker run --rm --entrypoint node -v "$(CURDIR)/dist/axe:/pages:ro" -v "$(CURDIR)/scripts/axe-pages.mjs:/axe-pages.mjs:ro" $(AXE_IMAGE) /axe-pages.mjs /pages
 
 relay-proxy:
 	mkdir -p dist

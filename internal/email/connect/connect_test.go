@@ -22,6 +22,7 @@ import (
 
 	"github.com/change-fabric/moose/internal/email/connect"
 	"github.com/change-fabric/moose/internal/email/envelope"
+	"github.com/change-fabric/moose/internal/email/palette"
 	"github.com/change-fabric/moose/internal/email/provider"
 	"github.com/change-fabric/moose/internal/email/store"
 	"github.com/change-fabric/moose/internal/email/store/sqlite"
@@ -604,7 +605,7 @@ func TestPageRowsAndControls(t *testing.T) {
 		t.Errorf("row order wrong: needs_reauth must sort first, then connect order")
 	}
 	for _, want := range []string{
-		"alpha@x.example", "Blue", "Vermilion", "Teal", "Amber", // address and colour name per row
+		"alpha@x.example", palette.At(0).Name, palette.At(1).Name, palette.At(2).Name, palette.At(3).Name, // address and colour name per row
 		"Needs reconnect", "Connected", "Disconnected", "Last sync", "never",
 		"Reconnect Charlie", "Reconnect Delta",
 		"/connect/accounts/" + ok.ID + "/enable-send", "/connect/accounts/" + sendOn.ID + "/disable-send",
