@@ -11,6 +11,7 @@ import (
 
 	"github.com/change-fabric/moose/internal/auth"
 	"github.com/change-fabric/moose/internal/cli"
+	"github.com/change-fabric/moose/internal/drive/api"
 	"github.com/change-fabric/moose/internal/drive/connectors/fake"
 	"github.com/change-fabric/moose/internal/drive/core"
 	"github.com/change-fabric/moose/internal/server"
@@ -29,7 +30,7 @@ func TestCLIAgainstServer(t *testing.T) {
 	svc, _ := core.NewService([]core.Connector{fake.New("gdrive",
 		core.Document{DocRef: core.DocRef{ID: "doc1", Title: "Roadmap"}, Content: "moose roadmap", ContentType: "text/plain"})}, core.Options{})
 	a := &auth.Authenticator{Store: st, Identity: auth.DevIdentity{Login: "me@example.com"}}
-	srv := httptest.NewServer(server.New(server.Deps{Service: svc, Store: st, Auth: a, Version: "test"}))
+	srv := httptest.NewServer(server.New(server.Deps{Store: st, Auth: a, Mounts: api.Mounts(api.Deps{Service: svc, Store: st, Version: "test"})}))
 	defer func() { srv.Close(); a.Wait() }()
 
 	envs := map[string]string{"MOOSE_CREDENTIALS": filepath.Join(dir, "creds.json")}

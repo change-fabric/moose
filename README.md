@@ -55,7 +55,9 @@ Drive-specific code lives under `internal/drive`; shared packages stay at the to
 | `internal/drive/core` | Drive service layer over connectors |
 | `internal/drive/mcp` | Drive MCP server and tools |
 | `internal/drive/api` | Drive REST API router |
-| `internal/server`, `internal/bootstrap`, `internal/config` | HTTP server, startup wiring, configuration |
+| `internal/server` | Auth and audit around a connector's mounts |
+| `internal/mcpkit` | Shared MCP server construction, tool annotations, untrusted-content wrapper |
+| `internal/bootstrap`, `internal/config` | Startup wiring, configuration |
 | `internal/auth`, `internal/store`, `internal/audit` | Identity and tokens, storage backends, audit log |
 | `internal/cli` | The `moose` CLI |
 

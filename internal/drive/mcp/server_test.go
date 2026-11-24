@@ -15,8 +15,10 @@ import (
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/change-fabric/moose/internal/auth"
+	"github.com/change-fabric/moose/internal/drive/api"
 	"github.com/change-fabric/moose/internal/drive/connectors/fake"
 	"github.com/change-fabric/moose/internal/drive/core"
+	"github.com/change-fabric/moose/internal/mcpkit"
 	"github.com/change-fabric/moose/internal/server"
 	"github.com/change-fabric/moose/internal/store/sqlite"
 )
@@ -55,7 +57,7 @@ func setup(t *testing.T) (string, string) {
 		t.Fatal(err)
 	}
 	a := &auth.Authenticator{Store: st, Identity: auth.DevIdentity{Login: me}}
-	srv := httptest.NewServer(server.New(server.Deps{Service: svc, Store: st, Auth: a, Version: "test"}))
+	srv := httptest.NewServer(server.New(server.Deps{Store: st, Auth: a, Mounts: api.Mounts(api.Deps{Service: svc, Store: st, Version: "test"})}))
 	t.Cleanup(func() { srv.Close(); a.Wait() })
 
 	resp, err := http.Post(srv.URL+auth.BootstrapPath, "application/json", bytes.NewBufferString(`{"name":"mcp"}`))
@@ -74,7 +76,7 @@ func connect(t *testing.T, url, token string) *sdk.ClientSession {
 	t.Helper()
 	client := sdk.NewClient(&sdk.Implementation{Name: "moose-test", Version: "test"}, nil)
 	tr := &sdk.StreamableClientTransport{
-		Endpoint:   url + server.MCPPath,
+		Endpoint:   url + mcpkit.Path,
 		HTTPClient: &http.Client{Transport: bearer{token: token, base: http.DefaultTransport}},
 		MaxRetries: -1,
 	}
@@ -192,7 +194,7 @@ func TestMCP(t *testing.T) {
 func TestMCPRequiresBearer(t *testing.T) {
 	url, _ := setup(t)
 	body := `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"x","version":"1"}}}`
-	req, _ := http.NewRequest(http.MethodPost, url+server.MCPPath, strings.NewReader(body))
+	req, _ := http.NewRequest(http.MethodPost, url+mcpkit.Path, strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json, text/event-stream")
 	resp, err := http.DefaultClient.Do(req)
@@ -209,7 +211,7 @@ func TestMCPRequiresBearer(t *testing.T) {
 
 	// The SDK client fails to initialize without the header too.
 	client := sdk.NewClient(&sdk.Implementation{Name: "moose-test", Version: "test"}, nil)
-	if _, err := client.Connect(context.Background(), &sdk.StreamableClientTransport{Endpoint: url + server.MCPPath, MaxRetries: -1}, nil); err == nil {
+	if _, err := client.Connect(context.Background(), &sdk.StreamableClientTransport{Endpoint: url + mcpkit.Path, MaxRetries: -1}, nil); err == nil {
 		t.Fatal("connect without bearer succeeded")
 	}
 }

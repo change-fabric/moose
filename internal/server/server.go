@@ -1,6 +1,6 @@
-// Package server composes auditing, authentication, the REST API, and the MCP
-// endpoint into the one http.Handler both runtime shapes (moosed and the
-// Lambda) serve.
+// Package server composes auditing, authentication, and a connector's mounts
+// into the one http.Handler both runtime shapes (moosed and the Lambda)
+// serve. It knows nothing about any connector; each supplies its own mounts.
 package server
 
 import (
@@ -10,41 +10,41 @@ import (
 
 	"github.com/change-fabric/moose/internal/audit"
 	"github.com/change-fabric/moose/internal/auth"
-	"github.com/change-fabric/moose/internal/drive/api"
-	"github.com/change-fabric/moose/internal/drive/core"
-	moosemcp "github.com/change-fabric/moose/internal/drive/mcp"
 	"github.com/change-fabric/moose/internal/store"
 )
 
-// MCPPath is where the MCP streamable HTTP endpoint is mounted.
-const MCPPath = "/mcp"
+// Mount is one route a connector contributes to the server. Pattern is a
+// net/http.ServeMux pattern. Every mount sits behind authentication and
+// auditing; Admin additionally requires an admin principal.
+type Mount struct {
+	Pattern string
+	Handler http.Handler
+	Admin   bool
+}
 
 // Deps are everything the handler needs. Auth must have Store and Identity set.
 type Deps struct {
-	Service *core.Service
-	Store   store.Store
-	Auth    *auth.Authenticator
-	Version string
-	Logger  *slog.Logger
-	Now     func() time.Time
-	// MCP overrides the /mcp handler. Nil serves the moose MCP server over
-	// Service; either way it sits behind the same auth.
-	MCP http.Handler
+	Store  store.Store
+	Auth   *auth.Authenticator
+	Logger *slog.Logger
+	Now    func() time.Time
+	// Mounts are the routes of the connector being served, for example
+	// api.Mounts for Drive.
+	Mounts []Mount
 }
 
 // New builds the full handler: audit (outermost, so 401s are recorded) then
 // auth then routing.
 func New(d Deps) http.Handler {
 	mux := http.NewServeMux()
-	api.New(api.Deps{Service: d.Service, Store: d.Store, Version: d.Version, Now: d.Now}).Register(mux)
 	mux.Handle("POST "+auth.BootstrapPath, d.Auth.Bootstrap())
-
-	mcp := d.MCP
-	if mcp == nil {
-		mcp = moosemcp.Handler(moosemcp.NewServer(d.Service, d.Version))
+	for _, m := range d.Mounts {
+		h := m.Handler
+		if m.Admin {
+			h = auth.RequireAdmin(h)
+		}
+		mux.Handle(m.Pattern, h)
 	}
-	mux.Handle(MCPPath, mcp)
-	mux.Handle(MCPPath+"/", mcp)
 
 	// Unknown paths get the JSON error shape instead of the mux's text body.
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {

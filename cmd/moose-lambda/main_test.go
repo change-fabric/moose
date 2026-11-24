@@ -11,6 +11,7 @@ import (
 
 	"github.com/change-fabric/moose/internal/auth"
 	"github.com/change-fabric/moose/internal/config"
+	"github.com/change-fabric/moose/internal/drive/api"
 	"github.com/change-fabric/moose/internal/drive/connectors/fake"
 	"github.com/change-fabric/moose/internal/drive/core"
 	"github.com/change-fabric/moose/internal/server"
@@ -45,7 +46,7 @@ func TestLambdaAdapter(t *testing.T) {
 	}
 	a := &auth.Authenticator{Store: st, Identity: auth.HeaderIdentity{Secret: []byte(secret)}}
 	t.Cleanup(a.Wait)
-	invoke := proxy(server.New(server.Deps{Service: svc, Store: st, Auth: a, Version: "test"}))
+	invoke := proxy(server.New(server.Deps{Store: st, Auth: a, Mounts: api.Mounts(api.Deps{Service: svc, Store: st, Version: "test"})}))
 
 	relay := map[string]string{
 		"Authorization":        "Bearer " + plain,

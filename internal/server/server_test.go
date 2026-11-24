@@ -48,7 +48,7 @@ func newEnv(t *testing.T) *env {
 		t.Fatal(err)
 	}
 	a := &auth.Authenticator{Store: st, Identity: auth.DevIdentity{Login: me}}
-	h := server.New(server.Deps{Service: svc, Store: st, Auth: a, Version: "test"})
+	h := server.New(server.Deps{Store: st, Auth: a, Mounts: api.Mounts(api.Deps{Service: svc, Store: st, Version: "test"})})
 	e := &env{t: t, srv: httptest.NewServer(h), a: a}
 	t.Cleanup(func() { e.srv.Close(); a.Wait() })
 	return e
