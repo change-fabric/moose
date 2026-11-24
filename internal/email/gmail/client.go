@@ -51,6 +51,38 @@ func (c *Client) Capabilities() provider.Capabilities {
 	return provider.Capabilities{Threads: true, Labels: true, SearchDialect: provider.DialectGmail}
 }
 
+// Profile identifies the authorized mailbox.
+type Profile struct {
+	// Address is the account's primary address as Gmail reports it.
+	Address string
+	// DisplayName is the account's sender name, best effort: empty when the
+	// sendAs settings cannot be read.
+	DisplayName string
+}
+
+// Profile returns the mailbox address (users.getProfile, covered by
+// gmail.readonly) and, best effort, its sender display name from the sendAs
+// list. A failure of the display name lookup is not an error.
+func (c *Client) Profile(ctx context.Context) (Profile, error) {
+	p, err := c.svc.Users.GetProfile(userMe).Context(ctx).Do()
+	if err != nil {
+		return Profile{}, mapErr(err)
+	}
+	if p.EmailAddress == "" {
+		return Profile{}, errors.New("gmail: profile has no email address")
+	}
+	out := Profile{Address: p.EmailAddress}
+	if sa, err := c.svc.Users.Settings.SendAs.List(userMe).Context(ctx).Do(); err == nil {
+		for _, s := range sa.SendAs {
+			if strings.EqualFold(s.SendAsEmail, p.EmailAddress) {
+				out.DisplayName = s.DisplayName
+				break
+			}
+		}
+	}
+	return out, nil
+}
+
 func (c *Client) ListMailboxes(ctx context.Context) ([]provider.Mailbox, error) {
 	res, err := c.svc.Users.Labels.List(userMe).Context(ctx).Do()
 	if err != nil {

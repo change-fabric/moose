@@ -4,9 +4,11 @@ package config
 
 import (
 	"bytes"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"regexp"
 	"strings"
@@ -93,6 +95,23 @@ type Redaction struct {
 type Email struct {
 	Provider string    `yaml:"provider"`
 	Send     EmailSend `yaml:"send"`
+	// BaseURL is the public origin of this deployment (https://moose.example.org).
+	// Setting it turns on the Google connect page, whose OAuth redirect URI is
+	// BaseURL + /connect/google/callback.
+	BaseURL string `yaml:"base_url"`
+	// KMSKeyID is the symmetric KMS key that wraps the data keys sealing
+	// refresh tokens and stored message snapshots.
+	KMSKeyID string `yaml:"kms_key_id"`
+
+	// Env-only settings (secrets).
+	// DevKey is a base64 32-byte key that stands in for KMS in dev (MOOSE_EMAIL_DEV_KEY).
+	DevKey string `yaml:"-"`
+	// GoogleSecretARN names the Secrets Manager secret holding the tenant's
+	// Google OAuth client as JSON {"client_id": ..., "client_secret": ...}.
+	GoogleSecretARN string `yaml:"-"`
+	// GoogleClientID and GoogleClientSecret are the dev alternative to the secret.
+	GoogleClientID     string `yaml:"-"`
+	GoogleClientSecret string `yaml:"-"`
 }
 
 // EmailSend gates live sending. It stays false until an end-to-end approval
@@ -166,6 +185,14 @@ func applyEnv(cfg *Config, getenv func(string) string) {
 	if cfg.Drive != nil {
 		set(&cfg.Drive.GDriveKeyFile, "MOOSE_GDRIVE_KEY_FILE")
 		set(&cfg.Drive.GDriveKeySecretARN, "MOOSE_GDRIVE_KEY_SECRET_ARN")
+	}
+	if cfg.Email != nil {
+		set(&cfg.Email.BaseURL, "MOOSE_EMAIL_BASE_URL")
+		set(&cfg.Email.KMSKeyID, "MOOSE_EMAIL_KMS_KEY_ID")
+		set(&cfg.Email.DevKey, "MOOSE_EMAIL_DEV_KEY")
+		set(&cfg.Email.GoogleSecretARN, "MOOSE_GOOGLE_OAUTH_SECRET_ARN")
+		set(&cfg.Email.GoogleClientID, "MOOSE_GOOGLE_CLIENT_ID")
+		set(&cfg.Email.GoogleClientSecret, "MOOSE_GOOGLE_CLIENT_SECRET")
 	}
 	if v := getenv("MOOSE_DYNAMO_TABLE"); v != "" {
 		cfg.Store.DynamoTable = v
@@ -251,7 +278,52 @@ func (c Config) ValidateEmail() error {
 	if e.Provider != ProviderGmail {
 		errs = append(errs, fmt.Errorf("email.provider %q is not %s", e.Provider, ProviderGmail))
 	}
+	if e.BaseURL != "" {
+		errs = append(errs, c.validateEmailConnect()...)
+	}
 	return joinErrs(errs)
+}
+
+// validateEmailConnect checks what the Google connect page needs: a public
+// origin, a key to seal tokens with, and the Google OAuth client.
+func (c Config) validateEmailConnect() []error {
+	e := c.Email
+	var errs []error
+	u, err := url.Parse(e.BaseURL)
+	switch {
+	case err != nil || u.Host == "" || (u.Scheme != "https" && u.Scheme != "http"):
+		errs = append(errs, fmt.Errorf("email.base_url %q must be an http(s) origin", e.BaseURL))
+	case u.Path != "" && u.Path != "/" || u.RawQuery != "" || u.Fragment != "":
+		errs = append(errs, fmt.Errorf("email.base_url %q must be an origin with no path", e.BaseURL))
+	case c.Env == EnvProd && u.Scheme != "https":
+		errs = append(errs, fmt.Errorf("email.base_url %q must start with https:// when env is prod", e.BaseURL))
+	}
+	switch {
+	case e.KMSKeyID == "" && e.DevKey == "":
+		errs = append(errs, errors.New("email.kms_key_id (or MOOSE_EMAIL_DEV_KEY in dev) is required to seal tokens"))
+	case e.KMSKeyID != "" && e.DevKey != "":
+		errs = append(errs, errors.New("set email.kms_key_id or MOOSE_EMAIL_DEV_KEY, not both"))
+	case e.DevKey != "":
+		if k, err := base64.StdEncoding.DecodeString(e.DevKey); err != nil || len(k) != 32 {
+			errs = append(errs, errors.New("MOOSE_EMAIL_DEV_KEY must be 32 bytes, base64 encoded"))
+		}
+	}
+	hasPair := e.GoogleClientID != "" && e.GoogleClientSecret != ""
+	switch {
+	case e.GoogleSecretARN == "" && !hasPair:
+		errs = append(errs, errors.New("MOOSE_GOOGLE_OAUTH_SECRET_ARN (or MOOSE_GOOGLE_CLIENT_ID and MOOSE_GOOGLE_CLIENT_SECRET in dev) is required"))
+	case e.GoogleSecretARN != "" && (e.GoogleClientID != "" || e.GoogleClientSecret != ""):
+		errs = append(errs, errors.New("set MOOSE_GOOGLE_OAUTH_SECRET_ARN or the client id and secret, not both"))
+	}
+	if c.Env == EnvProd {
+		if e.DevKey != "" {
+			errs = append(errs, errors.New("MOOSE_EMAIL_DEV_KEY is refused when env is prod"))
+		}
+		if e.GoogleClientSecret != "" {
+			errs = append(errs, errors.New("MOOSE_GOOGLE_CLIENT_SECRET is refused when env is prod; use MOOSE_GOOGLE_OAUTH_SECRET_ARN"))
+		}
+	}
+	return errs
 }
 
 // ValidateApprover checks the approver: section, which moose-approver requires.

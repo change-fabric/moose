@@ -60,6 +60,10 @@ Drive-specific code lives under `internal/drive`; shared packages stay at the to
 | `internal/email/provider` | Provider-neutral mailbox interface, search `Query`, `Capabilities` |
 | `internal/email/gmail` | Gmail provider: query compiler and REST client |
 | `internal/email/fake` | In-memory provider for tests |
+| `internal/email/store` | Email store: accounts, OAuth state, approvals, send ledger, per-account contacts, audit. Business rules once on a small `Backend`; `dynamo` and `sqlite` backends, `storetest` conformance suites |
+| `internal/email/envelope` | KMS envelope sealing (encryption context `{owner, account_id}`) with a local dev-key mode |
+| `internal/email/connect` | The `/connect/google` page: Google OAuth web flow, account rows, send enable and disable |
+| `internal/email/palette` | The 12 curated account colours |
 | `internal/bootstrap`, `internal/config` | Startup wiring, configuration |
 | `internal/auth`, `internal/store`, `internal/audit` | Identity and tokens, storage backends, audit log |
 | `internal/cli` | The `moose` CLI |

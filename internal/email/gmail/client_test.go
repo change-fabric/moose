@@ -187,3 +187,46 @@ func TestListMailboxes(t *testing.T) {
 		t.Errorf("capabilities %+v", got)
 	}
 }
+
+func TestProfileReadsAddressAndSenderName(t *testing.T) {
+	c := newClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/gmail/v1/users/me/profile":
+			writeJSON(w, map[string]any{"emailAddress": "Pat@Example.com"})
+		case "/gmail/v1/users/me/settings/sendAs":
+			writeJSON(w, map[string]any{"sendAs": []map[string]any{
+				{"sendAsEmail": "alias@example.com", "displayName": "Alias"},
+				{"sendAsEmail": "pat@example.com", "displayName": "Pat Taylor", "isPrimary": true},
+			}})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	p, err := c.Profile(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Address != "Pat@Example.com" || p.DisplayName != "Pat Taylor" {
+		t.Fatalf("profile = %+v", p)
+	}
+}
+
+func TestProfileSurvivesSendAsFailureAndMapsAuthErrors(t *testing.T) {
+	c := newClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/gmail/v1/users/me/profile" {
+			writeJSON(w, map[string]any{"emailAddress": "pat@example.com"})
+			return
+		}
+		http.Error(w, "forbidden", http.StatusForbidden)
+	}))
+	p, err := c.Profile(context.Background())
+	if err != nil || p.Address != "pat@example.com" || p.DisplayName != "" {
+		t.Fatalf("profile = %+v, %v", p, err)
+	}
+	bad := newClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "nope", http.StatusUnauthorized)
+	}))
+	if _, err := bad.Profile(context.Background()); !errors.Is(err, provider.ErrAuth) {
+		t.Fatalf("401 err = %v, want provider.ErrAuth", err)
+	}
+}

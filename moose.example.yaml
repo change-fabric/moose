@@ -31,6 +31,10 @@ drive:
 #   provider: gmail
 #   send:
 #     live: false            # stays false until an end-to-end approval is verified
+#   base_url: https://moose.example.org   # turns on /connect/google (MOOSE_EMAIL_BASE_URL)
+#   kms_key_id: alias/moose-email         # seals refresh tokens (MOOSE_EMAIL_KMS_KEY_ID)
+# Env only: MOOSE_GOOGLE_OAUTH_SECRET_ARN (Secrets Manager JSON {client_id, client_secret}),
+# or in dev MOOSE_GOOGLE_CLIENT_ID + MOOSE_GOOGLE_CLIENT_SECRET and MOOSE_EMAIL_DEV_KEY (base64, 32 bytes).
 
 # moose-approver (not deployed yet; uncomment when running it)
 # approver:
