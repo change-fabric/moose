@@ -63,6 +63,7 @@ Drive-specific code lives under `internal/drive`; shared packages stay at the to
 | `internal/email/store` | Email store: accounts, OAuth state, approvals, send ledger, per-account contacts, audit. Business rules once on a small `Backend`; `dynamo` and `sqlite` backends, `storetest` conformance suites |
 | `internal/email/envelope` | KMS envelope sealing (encryption context `{owner, account_id}`) with a local dev-key mode |
 | `internal/email/connect` | The `/connect/google` page: Google OAuth web flow, account rows, send enable and disable |
+| `internal/email/oauthas` | Hand-rolled OAuth 2.1 authorization server for the public `/mcp`: DCR, authorization code with PKCE S256, opaque tokens, rotating refresh. Login is a passkey sign-in on a phone (QR interstitial); `/mcp` sits behind `auth.RequireBearerToken` |
 | `internal/email/palette` | The 12 curated account colours (every pair at CIE76 deltaE 20 or more under protan, deutan and tritan) |
 | `internal/approver/api` | moose-approver service API: HMAC-signed create (idempotent by key), status, consume; payload and preview types; the client moose-email uses |
 | `internal/approver/receipt` | KMS P-256 approval receipts and `Verify(pubkey, receipt, want)` |

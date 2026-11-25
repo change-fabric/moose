@@ -150,7 +150,11 @@ type RefreshFamily struct {
 	PrevHash    string     `json:"prev_hash,omitempty"`
 	PrevUntil   *time.Time `json:"prev_until,omitempty"`
 	// GraceUsed is set once the previous token has been replayed within the grace window.
-	GraceUsed   bool      `json:"grace_used,omitempty"`
+	GraceUsed bool `json:"grace_used,omitempty"`
+	// GracePair is the sealed token pair the winning rotation handed out. A
+	// concurrent loser replaying the previous token inside the grace window
+	// gets this pair once, so it ends up holding the family's current token.
+	GracePair   []byte    `json:"grace_pair,omitempty"`
 	Created     time.Time `json:"created"`
 	LastRotated time.Time `json:"last_rotated"`
 	IdleExpires time.Time `json:"idle_expires"`
@@ -174,6 +178,26 @@ const (
 	OutcomeRevoked RotateOutcome = "revoked"
 	OutcomeExpired RotateOutcome = "expired"
 )
+
+// AuthTxn is one in-flight /authorize browser transaction, keyed by the hash
+// of the secret polling handle the browser holds in its cookie. The dashboard
+// sign-in it waits on is bound to the same hash through the request payload.
+type AuthTxn struct {
+	Hash          string `json:"hash"`
+	Owner         string `json:"owner"`
+	ClientID      string `json:"client_id"`
+	RedirectURI   string `json:"redirect_uri"`
+	CodeChallenge string `json:"code_challenge"`
+	Resource      string `json:"resource"`
+	Scope         string `json:"scope,omitempty"`
+	State         string `json:"state,omitempty"`
+	// RequestID and PayloadSHA256 identify the approver request the poll
+	// verifies a receipt against.
+	RequestID     string    `json:"request_id"`
+	PayloadSHA256 string    `json:"payload_sha256"`
+	Expires       time.Time `json:"expires"`
+	TTL           time.Time `json:"-"`
+}
 
 // ConnectState is the server side of one Google connect attempt.
 type ConnectState struct {
@@ -296,6 +320,7 @@ type Store interface {
 	Sessions
 	RefreshFamilies
 	ConnectStates
+	AuthTxns
 	Approvals
 	SendLedger
 	HourlyCap
@@ -360,6 +385,10 @@ type RefreshFamilies interface {
 	// atomically swaps in newHash. Of two concurrent presentations exactly one
 	// rotates; the other sees the previous token (grace replay or reuse).
 	RotateRefresh(ctx context.Context, familyID, presentedHash, newHash string, now time.Time) (RotateOutcome, error)
+	// RotateRefreshWithPair is RotateRefresh that also records pair (the sealed
+	// tokens being handed out) on the family when the rotation wins, in the
+	// same write. A grace replay reads it back with GetRefreshFamily.
+	RotateRefreshWithPair(ctx context.Context, familyID, presentedHash, newHash string, pair []byte, now time.Time) (RotateOutcome, error)
 	// RevokeFamily revokes the family and every session minted in it.
 	RevokeFamily(ctx context.Context, familyID string) error
 }
@@ -370,6 +399,19 @@ type ConnectStates interface {
 	// TakeConnectState deletes and returns the state; ErrNotFound if absent,
 	// already taken, or expired.
 	TakeConnectState(ctx context.Context, hash string, now time.Time) (ConnectState, error)
+}
+
+// AuthTxns holds in-flight /authorize transactions.
+type AuthTxns interface {
+	// PutAuthTxn stores a transaction; ErrConflict if the hash exists.
+	PutAuthTxn(ctx context.Context, t AuthTxn) error
+	// GetAuthTxn reads a transaction without consuming it; ErrNotFound if
+	// absent, taken or expired.
+	GetAuthTxn(ctx context.Context, hash string, now time.Time) (AuthTxn, error)
+	// TakeAuthTxn deletes and returns the transaction with a conditional
+	// delete, so of two concurrent callers exactly one wins; the other gets
+	// ErrNotFound.
+	TakeAuthTxn(ctx context.Context, hash string, now time.Time) (AuthTxn, error)
 }
 
 // Approvals holds moose-email's view of approver requests.

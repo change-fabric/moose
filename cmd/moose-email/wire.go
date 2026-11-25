@@ -18,9 +18,11 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/kms"
 	"github.com/aws/aws-sdk-go-v2/service/secretsmanager"
 
+	"github.com/change-fabric/moose/internal/approver/api"
 	"github.com/change-fabric/moose/internal/config"
 	"github.com/change-fabric/moose/internal/email/connect"
 	"github.com/change-fabric/moose/internal/email/envelope"
+	"github.com/change-fabric/moose/internal/email/oauthas"
 	"github.com/change-fabric/moose/internal/email/store"
 	emaildynamo "github.com/change-fabric/moose/internal/email/store/dynamo"
 	emailsqlite "github.com/change-fabric/moose/internal/email/store/sqlite"
@@ -35,10 +37,13 @@ type mount struct {
 // secretFunc reads a Secrets Manager secret.
 type secretFunc func(ctx context.Context, arn string) ([]byte, error)
 
-// wiring is everything the Google connect page needs, built from config.
+// wiring is everything the Google connect page and the OAuth server need, built
+// from config.
 type wiring struct {
 	store   store.Store
 	connect *connect.Server
+	// oauth is nil unless the email: section configures the OAuth server.
+	oauth *oauthas.Server
 }
 
 // buildConnect opens the email store and the token sealer and returns the
@@ -120,7 +125,46 @@ func buildConnect(ctx context.Context, cfg config.Config, log *slog.Logger, load
 	if err != nil {
 		return fail(err)
 	}
-	return &wiring{store: st, connect: srv}, nil
+	w := &wiring{store: st, connect: srv}
+	if e.OAuthEnabled() {
+		if w.oauth, err = buildOAuth(ctx, *e, st, seal, log, base.Scheme != "https", secret, needAWS); err != nil {
+			return fail(err)
+		}
+	}
+	return w, nil
+}
+
+// buildOAuth builds the authorization server: an HMAC client for the approver's
+// service API (URL from email.approver_url, defaulting to the public origin) and
+// the pinned receipt key.
+func buildOAuth(ctx context.Context, e config.Email, st store.Store, seal envelope.Sealer, log *slog.Logger,
+	insecure bool, secret secretFunc, needAWS func() (aws.Config, error)) (*oauthas.Server, error) {
+	key := []byte(e.ApproverSecret)
+	if e.ApproverSecretARN != "" {
+		if secret == nil {
+			ac, err := needAWS()
+			if err != nil {
+				return nil, err
+			}
+			secret = secretsManager(secretsmanager.NewFromConfig(ac))
+		}
+		var err error
+		if key, err = secret(ctx, e.ApproverSecretARN); err != nil {
+			return nil, fmt.Errorf("approver service secret: %w", err)
+		}
+	}
+	if len(key) < 32 {
+		return nil, errors.New("the approver service secret must be at least 32 bytes")
+	}
+	approverURL := e.ApproverURL
+	if approverURL == "" {
+		approverURL = e.BaseURL
+	}
+	return oauthas.New(oauthas.Deps{
+		Store: st, Seal: seal, Approver: &api.Client{BaseURL: approverURL, Secret: key},
+		ReceiptKey: []byte(e.ReceiptPublicKey), RPID: e.RPID, Owner: e.Owner,
+		BaseURL: e.BaseURL, InsecureCookies: insecure, Log: log,
+	})
 }
 
 func openStore(ctx context.Context, cfg config.Config, needAWS func() (aws.Config, error)) (store.Store, error) {

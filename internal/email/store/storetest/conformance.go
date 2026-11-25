@@ -657,6 +657,80 @@ func Run(t *testing.T, newStore func(t *testing.T) store.Store) {
 		t.Fatal("absolute expiry never hit")
 	})
 
+	t.Run("RefreshGracePairHandedToTheLoser", func(t *testing.T) {
+		s := newStore(t)
+		must(t, s.CreateRefreshFamily(ctx, newFamily("fam1")))
+		t0 := now.Add(time.Minute)
+		out, err := s.RotateRefreshWithPair(ctx, "fam1", "r0", "r1", []byte("sealed-pair"), t0)
+		must(t, err)
+		if out != store.OutcomeRotated {
+			t.Fatalf("rotation = %s", out)
+		}
+		out, err = s.RotateRefreshWithPair(ctx, "fam1", "r0", "ignored", []byte("loser"), t0.Add(2*time.Second))
+		must(t, err)
+		if out != store.OutcomeGraceReplay {
+			t.Fatalf("replay = %s, want grace_replay", out)
+		}
+		f, err := s.GetRefreshFamily(ctx, "fam1")
+		must(t, err)
+		if string(f.GracePair) != "sealed-pair" || f.CurrentHash != "r1" {
+			t.Fatalf("family after replay = pair %q current %q; the winner's pair must survive", f.GracePair, f.CurrentHash)
+		}
+		if _, err := s.RotateRefreshWithPair(ctx, "fam1", "r0", "x", nil, t0.Add(3*time.Second)); err != nil {
+			t.Fatal(err)
+		}
+		if f, _ = s.GetRefreshFamily(ctx, "fam1"); len(f.GracePair) != 0 || !f.Revoked {
+			t.Fatalf("a second replay must revoke the family and drop the pair: %+v", f)
+		}
+	})
+
+	t.Run("AuthTxnTakenOnce", func(t *testing.T) {
+		s := newStore(t)
+		tx := store.AuthTxn{Hash: "tx1", Owner: "pat", ClientID: "c", RedirectURI: "https://x/cb", CodeChallenge: "ch",
+			Resource: "https://m/mcp", State: "st", RequestID: "req1", PayloadSHA256: "sha", Expires: now.Add(10 * time.Minute)}
+		must(t, s.PutAuthTxn(ctx, tx))
+		if err := s.PutAuthTxn(ctx, tx); !errors.Is(err, store.ErrConflict) {
+			t.Fatalf("duplicate txn err = %v", err)
+		}
+		got, err := s.GetAuthTxn(ctx, "tx1", now)
+		must(t, err)
+		if got.RequestID != "req1" || got.State != "st" || got.Resource != "https://m/mcp" {
+			t.Fatalf("txn = %+v", got)
+		}
+		if _, err := s.GetAuthTxn(ctx, "tx1", now.Add(11*time.Minute)); !errors.Is(err, store.ErrNotFound) {
+			t.Fatalf("expired get err = %v, want ErrNotFound", err)
+		}
+		if _, err := s.TakeAuthTxn(ctx, "tx1", now); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.TakeAuthTxn(ctx, "tx1", now); !errors.Is(err, store.ErrNotFound) {
+			t.Fatalf("second take err = %v, want ErrNotFound", err)
+		}
+		if _, err := s.GetAuthTxn(ctx, "tx1", now); !errors.Is(err, store.ErrNotFound) {
+			t.Fatalf("get after take err = %v", err)
+		}
+	})
+
+	t.Run("AuthTxnConcurrentTake", func(t *testing.T) {
+		s := newStore(t)
+		must(t, s.PutAuthTxn(ctx, store.AuthTxn{Hash: "tx1", Owner: "pat", Expires: now.Add(time.Minute)}))
+		var won atomic.Int32
+		var wg sync.WaitGroup
+		for range 8 {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				if _, err := s.TakeAuthTxn(ctx, "tx1", now); err == nil {
+					won.Add(1)
+				}
+			}()
+		}
+		wg.Wait()
+		if won.Load() != 1 {
+			t.Fatalf("%d takes won, want 1", won.Load())
+		}
+	})
+
 	t.Run("ConnectStateTakenOnce", func(t *testing.T) {
 		s := newStore(t)
 		c := store.ConnectState{Hash: "st1", Owner: "pat", Verifier: "v", ReconnectID: "acc_1", Expires: now.Add(10 * time.Minute)}

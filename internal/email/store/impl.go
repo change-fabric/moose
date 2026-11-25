@@ -31,6 +31,7 @@ type ttlSetter interface{ setTTL(time.Time) }
 func (c *AuthCode) setTTL(t time.Time)     { c.TTL = t }
 func (c *Session) setTTL(t time.Time)      { c.TTL = t }
 func (c *ConnectState) setTTL(t time.Time) { c.TTL = t }
+func (c *AuthTxn) setTTL(t time.Time)      { c.TTL = t }
 func (a *Approval) setTTL(t time.Time)     { a.TTL = t }
 func (r *SendRow) setTTL(t time.Time)      { r.TTL = t }
 func (e *AuditEvent) setTTL(t time.Time)   { e.ExpiresAt = t }
@@ -385,12 +386,16 @@ func (s *impl) GetRefreshFamily(ctx context.Context, id string) (RefreshFamily, 
 }
 
 func (s *impl) RotateRefresh(ctx context.Context, familyID, presentedHash, newHash string, now time.Time) (RotateOutcome, error) {
+	return s.RotateRefreshWithPair(ctx, familyID, presentedHash, newHash, nil, now)
+}
+
+func (s *impl) RotateRefreshWithPair(ctx context.Context, familyID, presentedHash, newHash string, pair []byte, now time.Time) (RotateOutcome, error) {
 	if presentedHash == "" || newHash == "" {
 		return "", ErrNotFound
 	}
 	var out RotateOutcome
 	_, err := modify(ctx, s.b, "FAM#"+familyID, "META", func(f *RefreshFamily) error {
-		out = rotate(f, presentedHash, newHash, now.UTC())
+		out = rotate(f, presentedHash, newHash, pair, now.UTC())
 		if out == OutcomeRevoked || out == OutcomeExpired {
 			return errSkip
 		}
@@ -408,7 +413,7 @@ func (s *impl) RotateRefresh(ctx context.Context, familyID, presentedHash, newHa
 }
 
 // rotate decides and applies one refresh presentation to f in memory.
-func rotate(f *RefreshFamily, presented, newHash string, now time.Time) RotateOutcome {
+func rotate(f *RefreshFamily, presented, newHash string, pair []byte, now time.Time) RotateOutcome {
 	switch {
 	case f.Revoked:
 		return OutcomeRevoked
@@ -417,7 +422,7 @@ func rotate(f *RefreshFamily, presented, newHash string, now time.Time) RotateOu
 	case presented == f.CurrentHash:
 		until := now.Add(RefreshGrace)
 		f.PrevHash, f.PrevUntil, f.GraceUsed = f.CurrentHash, &until, false
-		f.CurrentHash = newHash
+		f.CurrentHash, f.GracePair = newHash, pair
 		f.LastRotated = now
 		f.IdleExpires = now.Add(RefreshIdleTTL)
 		if f.IdleExpires.After(f.AbsExpires) {
@@ -428,7 +433,7 @@ func rotate(f *RefreshFamily, presented, newHash string, now time.Time) RotateOu
 		f.GraceUsed = true
 		return OutcomeGraceReplay
 	default:
-		f.Revoked = true
+		f.Revoked, f.GracePair = true, nil
 		return OutcomeReused
 	}
 }
@@ -486,6 +491,46 @@ func (s *impl) TakeConnectState(ctx context.Context, hash string, now time.Time)
 		return ConnectState{}, ErrNotFound
 	}
 	return c, nil
+}
+
+// ---- authorize transactions ----
+
+func (s *impl) PutAuthTxn(ctx context.Context, t AuthTxn) error {
+	err := s.b.Transact(ctx, []Op{{Kind: OpPut, Cond: Cond{Kind: CondAbsent}, Item: Item{
+		PK: "ATXN#" + t.Hash, SK: "META", Data: encode(t), TTL: secs(t.Expires.Add(time.Hour))}}})
+	if _, failed := condIndex(err); failed {
+		return ErrConflict
+	}
+	return err
+}
+
+func (s *impl) GetAuthTxn(ctx context.Context, hash string, now time.Time) (AuthTxn, error) {
+	t, _, err := load[AuthTxn](ctx, s.b, "ATXN#"+hash, "META")
+	if err != nil {
+		return AuthTxn{}, err
+	}
+	if now.After(t.Expires) {
+		return AuthTxn{}, ErrNotFound
+	}
+	return t, nil
+}
+
+func (s *impl) TakeAuthTxn(ctx context.Context, hash string, now time.Time) (AuthTxn, error) {
+	t, it, err := load[AuthTxn](ctx, s.b, "ATXN#"+hash, "META")
+	if err != nil {
+		return AuthTxn{}, err
+	}
+	err = s.b.Transact(ctx, []Op{{Kind: OpDelete, Item: it, Cond: Cond{Kind: CondVer, Ver: it.Ver}}})
+	if _, failed := condIndex(err); failed {
+		return AuthTxn{}, ErrNotFound
+	}
+	if err != nil {
+		return AuthTxn{}, err
+	}
+	if now.After(t.Expires) {
+		return AuthTxn{}, ErrNotFound
+	}
+	return t, nil
 }
 
 // ---- approvals ----

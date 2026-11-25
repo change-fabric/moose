@@ -35,6 +35,14 @@ drive:
 #   kms_key_id: alias/moose-email         # seals refresh tokens (MOOSE_EMAIL_KMS_KEY_ID)
 # Env only: MOOSE_GOOGLE_OAUTH_SECRET_ARN (Secrets Manager JSON {client_id, client_secret}),
 # or in dev MOOSE_GOOGLE_CLIENT_ID + MOOSE_GOOGLE_CLIENT_SECRET and MOOSE_EMAIL_DEV_KEY (base64, 32 bytes).
+# OAuth 2.1 server for a public /mcp (all of these, or none; prod requires them with a base_url):
+#   owner: pat                            # single tenant owner (MOOSE_EMAIL_OWNER)
+#   rp_id: moose.example.org              # receipts must carry this rp id (MOOSE_EMAIL_RP_ID)
+#   receipt_public_key: |                 # PEM public key of the approver's signing key
+#     -----BEGIN PUBLIC KEY-----
+#     ...
+#   approver_url: https://moose.example.org   # optional, defaults to base_url
+# plus MOOSE_EMAIL_APPROVER_SECRET_ARN (or MOOSE_EMAIL_APPROVER_SECRET in dev, 32+ characters).
 
 # moose-approver (not deployed yet; uncomment when running it)
 # approver:

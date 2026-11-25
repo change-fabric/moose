@@ -5,6 +5,7 @@ package config
 import (
 	"bytes"
 	"encoding/base64"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"io"
@@ -103,7 +104,25 @@ type Email struct {
 	// refresh tokens and stored message snapshots.
 	KMSKeyID string `yaml:"kms_key_id"`
 
+	// OAuth settings. Setting any of Owner, RPID or ReceiptPublicKey turns on
+	// the OAuth 2.1 authorization server and puts /mcp behind it; then all of
+	// them, the service secret and BaseURL are required.
+	//
+	// Owner is the single tenant owner every token is issued to.
+	Owner string `yaml:"owner"`
+	// RPID is the WebAuthn relying party id every receipt must carry.
+	RPID string `yaml:"rp_id"`
+	// ReceiptPublicKey is the PEM public half of the receipt signing key,
+	// pinned here so moose-email verifies receipts offline.
+	ReceiptPublicKey string `yaml:"receipt_public_key"`
+	// ApproverURL is where moose-approver's service API lives; it defaults to BaseURL.
+	ApproverURL string `yaml:"approver_url"`
+
 	// Env-only settings (secrets).
+	// ApproverSecretARN names the Secrets Manager secret holding the HMAC key
+	// shared with moose-approver; ApproverSecret is the dev alternative.
+	ApproverSecretARN string `yaml:"-"`
+	ApproverSecret    string `yaml:"-"`
 	// DevKey is a base64 32-byte key that stands in for KMS in dev (MOOSE_EMAIL_DEV_KEY).
 	DevKey string `yaml:"-"`
 	// GoogleSecretARN names the Secrets Manager secret holding the tenant's
@@ -208,6 +227,12 @@ func applyEnv(cfg *Config, getenv func(string) string) {
 		set(&cfg.Email.BaseURL, "MOOSE_EMAIL_BASE_URL")
 		set(&cfg.Email.KMSKeyID, "MOOSE_EMAIL_KMS_KEY_ID")
 		set(&cfg.Email.DevKey, "MOOSE_EMAIL_DEV_KEY")
+		set(&cfg.Email.Owner, "MOOSE_EMAIL_OWNER")
+		set(&cfg.Email.RPID, "MOOSE_EMAIL_RP_ID")
+		set(&cfg.Email.ReceiptPublicKey, "MOOSE_EMAIL_RECEIPT_PUBLIC_KEY")
+		set(&cfg.Email.ApproverURL, "MOOSE_EMAIL_APPROVER_URL")
+		set(&cfg.Email.ApproverSecretARN, "MOOSE_EMAIL_APPROVER_SECRET_ARN")
+		set(&cfg.Email.ApproverSecret, "MOOSE_EMAIL_APPROVER_SECRET")
 		set(&cfg.Email.GoogleSecretARN, "MOOSE_GOOGLE_OAUTH_SECRET_ARN")
 		set(&cfg.Email.GoogleClientID, "MOOSE_GOOGLE_CLIENT_ID")
 		set(&cfg.Email.GoogleClientSecret, "MOOSE_GOOGLE_CLIENT_SECRET")
@@ -310,7 +335,54 @@ func (c Config) ValidateEmail() error {
 	if e.BaseURL != "" {
 		errs = append(errs, c.validateEmailConnect()...)
 	}
+	if e.OAuthEnabled() {
+		errs = append(errs, c.validateEmailOAuth()...)
+	} else if c.Env == EnvProd && e.BaseURL != "" {
+		errs = append(errs, errors.New("email.owner, email.rp_id and email.receipt_public_key are required when env is prod: a public /mcp needs the OAuth server"))
+	}
 	return joinErrs(errs)
+}
+
+// OAuthEnabled reports whether the OAuth authorization server is configured.
+func (e *Email) OAuthEnabled() bool {
+	return e.Owner != "" || e.RPID != "" || e.ReceiptPublicKey != ""
+}
+
+// validateEmailOAuth checks what the authorization server and the protected
+// /mcp need: the public origin, the owner, the pinned receipt key and the
+// shared secret for the service API.
+func (c Config) validateEmailOAuth() []error {
+	e := c.Email
+	var errs []error
+	if e.BaseURL == "" {
+		errs = append(errs, errors.New("email.base_url is required for OAuth (it is the issuer and the /mcp resource)"))
+	}
+	if e.Owner == "" {
+		errs = append(errs, errors.New("email.owner is required for OAuth"))
+	}
+	if e.RPID == "" {
+		errs = append(errs, errors.New("email.rp_id is required for OAuth"))
+	}
+	if blk, _ := pem.Decode([]byte(e.ReceiptPublicKey)); blk == nil || blk.Type != "PUBLIC KEY" {
+		errs = append(errs, errors.New("email.receipt_public_key must be a PEM PUBLIC KEY"))
+	}
+	if e.ApproverURL != "" {
+		if u, err := url.Parse(e.ApproverURL); err != nil || u.Host == "" || (u.Scheme != "https" && u.Scheme != "http") {
+			errs = append(errs, fmt.Errorf("email.approver_url %q must be an http(s) URL", e.ApproverURL))
+		}
+	}
+	switch {
+	case e.ApproverSecretARN == "" && e.ApproverSecret == "":
+		errs = append(errs, errors.New("MOOSE_EMAIL_APPROVER_SECRET_ARN (or MOOSE_EMAIL_APPROVER_SECRET in dev) is required for OAuth"))
+	case e.ApproverSecretARN != "" && e.ApproverSecret != "":
+		errs = append(errs, errors.New("set MOOSE_EMAIL_APPROVER_SECRET_ARN or MOOSE_EMAIL_APPROVER_SECRET, not both"))
+	case e.ApproverSecret != "" && len(e.ApproverSecret) < 32:
+		errs = append(errs, errors.New("MOOSE_EMAIL_APPROVER_SECRET must be at least 32 characters"))
+	}
+	if c.Env == EnvProd && e.ApproverSecret != "" {
+		errs = append(errs, errors.New("MOOSE_EMAIL_APPROVER_SECRET is refused when env is prod; use MOOSE_EMAIL_APPROVER_SECRET_ARN"))
+	}
+	return errs
 }
 
 // validateEmailConnect checks what the Google connect page needs: a public
