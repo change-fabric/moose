@@ -15,6 +15,7 @@ import (
 
 	"github.com/change-fabric/moose/internal/auth"
 	"github.com/change-fabric/moose/internal/config"
+	"github.com/change-fabric/moose/internal/drive/api"
 	"github.com/change-fabric/moose/internal/drive/connectors/gdrive"
 	"github.com/change-fabric/moose/internal/drive/core"
 	"github.com/change-fabric/moose/internal/server"
@@ -98,7 +99,8 @@ func FromEnv(ctx context.Context, opts Options) (*Runtime, error) {
 
 // Handler builds the composed http.Handler for this runtime.
 func (rt *Runtime) Handler(version string) http.Handler {
-	return server.New(server.Deps{Service: rt.Service, Store: rt.Store, Auth: rt.Auth, Version: version, Logger: rt.Logger})
+	return server.New(server.Deps{Store: rt.Store, Auth: rt.Auth, Logger: rt.Logger,
+		Mounts: api.Mounts(api.Deps{Service: rt.Service, Store: rt.Store, Version: version})})
 }
 
 func openStore(ctx context.Context, cfg config.Config, ddb dynamo.API) (store.Store, error) {

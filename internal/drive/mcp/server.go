@@ -19,6 +19,7 @@ import (
 	"github.com/change-fabric/moose/internal/audit"
 	"github.com/change-fabric/moose/internal/drive/connectors/gdrive"
 	"github.com/change-fabric/moose/internal/drive/core"
+	"github.com/change-fabric/moose/internal/mcpkit"
 )
 
 // Tool names.
@@ -98,16 +99,13 @@ func getDocumentSchema() *jsonschema.Schema {
 
 // NewServer builds the MCP server over svc.
 func NewServer(svc *core.Service, version string) *sdk.Server {
-	if version == "" {
-		version = "dev"
-	}
-	s := sdk.NewServer(&sdk.Implementation{Name: "moose", Version: version}, nil)
+	s := mcpkit.NewServer("moose", version, nil)
 
-	sdk.AddTool(s, &sdk.Tool{
+	mcpkit.AddTool(s, &sdk.Tool{
 		Name:        ToolListSources,
 		Description: "List connected data sources and the account to share content with.",
 		InputSchema: &jsonschema.Schema{Type: "object"},
-	}, func(ctx context.Context, _ *sdk.CallToolRequest, _ struct{}) (*sdk.CallToolResult, ListSourcesOut, error) {
+	}, mcpkit.ReadOnly(), func(ctx context.Context, _ *sdk.CallToolRequest, _ struct{}) (*sdk.CallToolResult, ListSourcesOut, error) {
 		audit.FromContext(ctx).SetAction(ToolListSources, "", "")
 		out := ListSourcesOut{Sources: []SourceOut{}}
 		for _, src := range svc.ListSources(ctx) {
@@ -116,11 +114,11 @@ func NewServer(svc *core.Service, version string) *sdk.Server {
 		return nil, out, nil
 	})
 
-	sdk.AddTool(s, &sdk.Tool{
+	mcpkit.AddTool(s, &sdk.Tool{
 		Name:        ToolSearch,
 		Description: "Search connected data sources for documents whose names or content match the query.",
 		InputSchema: searchSchema(),
-	}, func(ctx context.Context, _ *sdk.CallToolRequest, in SearchIn) (*sdk.CallToolResult, SearchOut, error) {
+	}, mcpkit.ReadOnly(), func(ctx context.Context, _ *sdk.CallToolRequest, in SearchIn) (*sdk.CallToolResult, SearchOut, error) {
 		audit.FromContext(ctx).SetAction(ToolSearch, in.Source, "")
 		res, err := svc.Search(ctx, core.SearchQuery{Text: in.Query, Source: in.Source, Limit: in.Limit, PageToken: in.PageToken})
 		if err != nil {
@@ -133,11 +131,11 @@ func NewServer(svc *core.Service, version string) *sdk.Server {
 		return nil, SearchOut{Items: items, NextPageToken: res.NextPageToken}, nil
 	})
 
-	sdk.AddTool(s, &sdk.Tool{
+	mcpkit.AddTool(s, &sdk.Tool{
 		Name:        ToolGetDocument,
 		Description: "Fetch one document's text content by source and id.",
 		InputSchema: getDocumentSchema(),
-	}, func(ctx context.Context, _ *sdk.CallToolRequest, in GetDocumentIn) (*sdk.CallToolResult, core.Document, error) {
+	}, mcpkit.ReadOnly(), func(ctx context.Context, _ *sdk.CallToolRequest, in GetDocumentIn) (*sdk.CallToolResult, core.Document, error) {
 		if in.Source == "" {
 			in.Source = defaultSource
 		}
@@ -151,12 +149,8 @@ func NewServer(svc *core.Service, version string) *sdk.Server {
 	return s
 }
 
-// Handler serves srv at /mcp as stateless streamable HTTP with JSON responses,
-// which Lambda needs and the Mac Mini tolerates.
-func Handler(srv *sdk.Server) http.Handler {
-	return sdk.NewStreamableHTTPHandler(func(*http.Request) *sdk.Server { return srv },
-		&sdk.StreamableHTTPOptions{Stateless: true, JSONResponse: true})
-}
+// Handler serves srv at /mcp; see mcpkit.Handler.
+func Handler(srv *sdk.Server) http.Handler { return mcpkit.Handler(srv) }
 
 func documentText(d core.Document) string {
 	var b strings.Builder
@@ -182,6 +176,5 @@ func toolError(ctx context.Context, err error) *sdk.CallToolResult {
 	case errors.Is(err, gdrive.ErrUpstreamUnavailable), errors.Is(err, core.ErrUpstreamUnavailable):
 		code, msg = "upstream_unavailable", "data source unavailable, try again later"
 	}
-	audit.FromContext(ctx).SetDetail(code)
-	return &sdk.CallToolResult{IsError: true, Content: []sdk.Content{&sdk.TextContent{Text: code + ": " + msg}}}
+	return mcpkit.ErrorResult(ctx, code, msg)
 }

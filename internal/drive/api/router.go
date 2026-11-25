@@ -16,6 +16,9 @@ import (
 	"github.com/change-fabric/moose/internal/auth"
 	"github.com/change-fabric/moose/internal/drive/connectors/gdrive"
 	"github.com/change-fabric/moose/internal/drive/core"
+	moosemcp "github.com/change-fabric/moose/internal/drive/mcp"
+	"github.com/change-fabric/moose/internal/mcpkit"
+	"github.com/change-fabric/moose/internal/server"
 	"github.com/change-fabric/moose/internal/store"
 )
 
@@ -33,6 +36,36 @@ type Deps struct {
 	Store   store.Store
 	Version string
 	Now     func() time.Time
+	// MCP overrides the /mcp handler. Nil serves the Drive MCP server over
+	// Service; either way it sits behind the server's auth.
+	MCP http.Handler
+}
+
+// Mounts returns every Drive route for internal/server: the REST surface and
+// the MCP endpoint.
+func Mounts(d Deps) []server.Mount {
+	a := New(d)
+	mcp := d.MCP
+	if mcp == nil {
+		mcp = moosemcp.Handler(moosemcp.NewServer(d.Service, d.Version))
+	}
+	ms := []server.Mount{
+		{Pattern: "GET /healthz", Handler: http.HandlerFunc(a.healthz)},
+		{Pattern: "GET /v1/whoami", Handler: http.HandlerFunc(a.whoami)},
+		{Pattern: "GET /v1/sources", Handler: http.HandlerFunc(a.sources)},
+		{Pattern: "GET /v1/search", Handler: http.HandlerFunc(a.search)},
+		{Pattern: "GET /v1/documents/{source}/{id...}", Handler: http.HandlerFunc(a.getDocument)},
+		{Pattern: "GET /v1/list", Handler: http.HandlerFunc(a.list)},
+		{Pattern: "POST /v1/tokens", Handler: http.HandlerFunc(a.createToken)},
+		{Pattern: "GET /v1/tokens", Handler: http.HandlerFunc(a.listTokens)},
+		{Pattern: "DELETE /v1/tokens/{id}", Handler: http.HandlerFunc(a.revokeToken)},
+		{Pattern: "POST /v1/users", Handler: http.HandlerFunc(a.addUser), Admin: true},
+		{Pattern: "GET /v1/users", Handler: http.HandlerFunc(a.listUsers), Admin: true},
+		{Pattern: "GET /v1/audit", Handler: http.HandlerFunc(a.listAudit), Admin: true},
+		{Pattern: mcpkit.Path, Handler: mcp},
+		{Pattern: mcpkit.Path + "/", Handler: mcp},
+	}
+	return ms
 }
 
 // API holds the REST handlers.
@@ -44,23 +77,6 @@ func New(d Deps) *API {
 		d.Now = time.Now
 	}
 	return &API{d: d}
-}
-
-// Register mounts every route except POST /v1/bootstrap/token, which the
-// server wires to auth.Authenticator.Bootstrap.
-func (a *API) Register(mux *http.ServeMux) {
-	mux.HandleFunc("GET /healthz", a.healthz)
-	mux.HandleFunc("GET /v1/whoami", a.whoami)
-	mux.HandleFunc("GET /v1/sources", a.sources)
-	mux.HandleFunc("GET /v1/search", a.search)
-	mux.HandleFunc("GET /v1/documents/{source}/{id...}", a.getDocument)
-	mux.HandleFunc("GET /v1/list", a.list)
-	mux.HandleFunc("POST /v1/tokens", a.createToken)
-	mux.HandleFunc("GET /v1/tokens", a.listTokens)
-	mux.HandleFunc("DELETE /v1/tokens/{id}", a.revokeToken)
-	mux.Handle("POST /v1/users", auth.RequireAdmin(http.HandlerFunc(a.addUser)))
-	mux.Handle("GET /v1/users", auth.RequireAdmin(http.HandlerFunc(a.listUsers)))
-	mux.Handle("GET /v1/audit", auth.RequireAdmin(http.HandlerFunc(a.listAudit)))
 }
 
 // Response shapes. Store records carry no JSON tags and a token hash, so the

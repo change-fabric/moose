@@ -26,6 +26,7 @@ DDB_PORT ?= 18000
 # Runs the store conformance suite against SQLite and a throwaway dynamodb-local container.
 test-store:
 	docker run -d --rm --name moose-ddb-test -p $(DDB_PORT):8000 $(DDB_IMAGE) >/dev/null && \
+	for i in $$(seq 1 60); do curl -s -o /dev/null http://localhost:$(DDB_PORT)/ && break; sleep 1; done && \
 	MOOSE_DYNAMO_ENDPOINT=http://localhost:$(DDB_PORT) $(GO) test -count=1 ./internal/store/... ; \
 	rc=$$?; docker stop moose-ddb-test >/dev/null; exit $$rc
 
