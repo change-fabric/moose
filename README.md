@@ -45,6 +45,20 @@ export MOOSE_CREDENTIALS=/src/dist/dev-credentials.json
 
 The REST API is described in [`api/openapi.yaml`](api/openapi.yaml). CLI exit codes: 0 ok, 1 usage, 2 auth (401/403), 3 not found, 4 upstream or server error.
 
+## Package map
+
+Drive-specific code lives under `internal/drive`; shared packages stay at the top of `internal`.
+
+| Package | Role |
+| --- | --- |
+| `internal/drive/connectors` | Connector interface, the Google Drive connector (`gdrive`), and a fake for tests |
+| `internal/drive/core` | Drive service layer over connectors |
+| `internal/drive/mcp` | Drive MCP server and tools |
+| `internal/drive/api` | Drive REST API router |
+| `internal/server`, `internal/bootstrap`, `internal/config` | HTTP server, startup wiring, configuration |
+| `internal/auth`, `internal/store`, `internal/audit` | Identity and tokens, storage backends, audit log |
+| `internal/cli` | The `moose` CLI |
+
 ## Mac Mini
 
 Docker Compose plus the Makefile; no Terraform and no published ports. `moosed` joins the tailnet with tsnet as node `moose` and serves `https://moose.<tailnet>.ts.net`.

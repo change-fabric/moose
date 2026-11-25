@@ -8,11 +8,11 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/change-fabric/moose/internal/api"
 	"github.com/change-fabric/moose/internal/audit"
 	"github.com/change-fabric/moose/internal/auth"
-	"github.com/change-fabric/moose/internal/core"
-	moosemcp "github.com/change-fabric/moose/internal/mcp"
+	"github.com/change-fabric/moose/internal/drive/api"
+	"github.com/change-fabric/moose/internal/drive/core"
+	moosemcp "github.com/change-fabric/moose/internal/drive/mcp"
 	"github.com/change-fabric/moose/internal/store"
 )
 

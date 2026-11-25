@@ -14,7 +14,7 @@ import (
 
 	"google.golang.org/api/option"
 
-	"github.com/change-fabric/moose/internal/core"
+	"github.com/change-fabric/moose/internal/drive/core"
 )
 
 type fakeFile struct {

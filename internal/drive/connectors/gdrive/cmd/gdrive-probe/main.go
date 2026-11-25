@@ -9,8 +9,8 @@ import (
 	"os"
 	"time"
 
-	"github.com/change-fabric/moose/internal/connectors/gdrive"
-	"github.com/change-fabric/moose/internal/core"
+	"github.com/change-fabric/moose/internal/drive/connectors/gdrive"
+	"github.com/change-fabric/moose/internal/drive/core"
 )
 
 func main() {

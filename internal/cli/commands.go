@@ -16,10 +16,10 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/change-fabric/moose/internal/api"
 	"github.com/change-fabric/moose/internal/auth"
-	"github.com/change-fabric/moose/internal/connectors/gdrive"
-	"github.com/change-fabric/moose/internal/core"
+	"github.com/change-fabric/moose/internal/drive/api"
+	"github.com/change-fabric/moose/internal/drive/connectors/gdrive"
+	"github.com/change-fabric/moose/internal/drive/core"
 )
 
 // Env is the process context the commands run in.

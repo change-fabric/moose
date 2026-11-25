@@ -11,8 +11,8 @@ import (
 
 	"github.com/change-fabric/moose/internal/auth"
 	"github.com/change-fabric/moose/internal/cli"
-	"github.com/change-fabric/moose/internal/connectors/fake"
-	"github.com/change-fabric/moose/internal/core"
+	"github.com/change-fabric/moose/internal/drive/connectors/fake"
+	"github.com/change-fabric/moose/internal/drive/core"
 	"github.com/change-fabric/moose/internal/server"
 	"github.com/change-fabric/moose/internal/store/sqlite"
 )
