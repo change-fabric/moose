@@ -41,7 +41,7 @@ variable "bootstrap_admin" {
 variable "lambda_zip" {
   description = "Path to the Lambda zip built by `make lambda`."
   type        = string
-  default     = "../../../dist/moose-lambda.zip"
+  default     = "../../../dist/moose-drive-lambda.zip"
 }
 
 variable "relay_proxy_binary" {

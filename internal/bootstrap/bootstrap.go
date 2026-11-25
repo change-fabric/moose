@@ -33,7 +33,7 @@ type Runtime struct {
 type Options struct {
 	Getenv func(string) string
 	Logger *slog.Logger
-	// Identity overrides the configured identity source. moosed passes the
+	// Identity overrides the configured identity source. moose-drive passes the
 	// tsnet source here because only it owns the tsnet node.
 	Identity auth.IdentitySource
 	// DynamoClient is used when store.kind is dynamo. Nil is an error until
@@ -116,7 +116,7 @@ func identity(ctx context.Context, cfg config.Config, secret func(context.Contex
 	case config.IdentityDev:
 		return auth.NewDevIdentity(cfg.Env, cfg.DevIdentity)
 	case config.IdentityTSNet:
-		return nil, errors.New("identity.mode tsnet needs the tsnet node from moosed")
+		return nil, errors.New("identity.mode tsnet needs the tsnet node from moose-drive")
 	case config.IdentityRelayHeaders:
 		if secret != nil && cfg.RelaySecretARN != "" {
 			v, err := secret(ctx, cfg.RelaySecretARN)

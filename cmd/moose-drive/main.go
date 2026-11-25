@@ -1,4 +1,4 @@
-// Command moosed is the long-lived moose server. In dev it serves plain HTTP
+// Command moose-drive is the long-lived moose server. In dev it serves plain HTTP
 // on MOOSE_LISTEN; otherwise it joins the tailnet with tsnet and serves HTTPS
 // on :443, taking caller identity from tsnet WhoIs.
 package main
@@ -34,12 +34,12 @@ func main() {
 	showVersion := flag.Bool("version", false, "print version and exit")
 	flag.Parse()
 	if *showVersion {
-		fmt.Println("moosed", version)
+		fmt.Println("moose-drive", version)
 		return
 	}
 	log := slog.New(slog.NewJSONHandler(os.Stderr, nil))
 	if err := run(log); err != nil {
-		log.Error("moosed exiting", "err", err)
+		log.Error("moose-drive exiting", "err", err)
 		os.Exit(1)
 	}
 }
@@ -77,7 +77,7 @@ func run(log *slog.Logger) error {
 		}
 	} else {
 		if cfg.Identity.Mode != config.IdentityTSNet {
-			return fmt.Errorf("without MOOSE_LISTEN moosed serves on the tailnet and needs identity.mode tsnet, got %q", cfg.Identity.Mode)
+			return fmt.Errorf("without MOOSE_LISTEN moose-drive serves on the tailnet and needs identity.mode tsnet, got %q", cfg.Identity.Mode)
 		}
 		ts = &tsnet.Server{
 			Hostname: cfg.Hostname,
@@ -117,7 +117,7 @@ func run(log *slog.Logger) error {
 	}
 	errc := make(chan error, 1)
 	go func() { errc <- srv.Serve(ln) }()
-	log.Info("moosed serving", "version", version, "addr", ln.Addr().String(), "env", cfg.Env, "identity", cfg.Identity.Mode)
+	log.Info("moose-drive serving", "version", version, "addr", ln.Addr().String(), "env", cfg.Env, "identity", cfg.Identity.Mode)
 
 	select {
 	case err := <-errc:
@@ -125,7 +125,7 @@ func run(log *slog.Logger) error {
 			return err
 		}
 	case <-ctx.Done():
-		log.Info("moosed shutting down")
+		log.Info("moose-drive shutting down")
 		sctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 		defer cancel()
 		if err := srv.Shutdown(sctx); err != nil {
@@ -133,7 +133,7 @@ func run(log *slog.Logger) error {
 		}
 	}
 	rt.Auth.Wait()
-	log.Info("moosed stopped")
+	log.Info("moose-drive stopped")
 	return nil
 }
 
