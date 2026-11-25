@@ -89,7 +89,7 @@ func run(log *slog.Logger) error {
 // registerTools adds the email tools. Without the OAuth server (local
 // development) a request has no token, so the dev identity stands in as owner.
 func registerTools(w *wiring, cfg config.Config) func(*sdk.Server) {
-	d := tools.Deps{Store: w.store}
+	d := tools.Deps{Store: w.store, Providers: w.providers, CursorKey: w.cursorKey}
 	if w.oauth == nil && cfg.Env == config.EnvDev {
 		d.FallbackOwner = cfg.DevIdentity
 	}
@@ -124,7 +124,11 @@ func newHandlerAuth(version string, protect func(http.Handler) http.Handler, reg
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"ok":true}`))
 	})
-	srv := mcpkit.NewServer(serverName, version, nil)
+	var opts *sdk.ServerOptions
+	if register != nil {
+		opts = tools.ServerOptions()
+	}
+	srv := mcpkit.NewServer(serverName, version, opts)
 	if register != nil {
 		register(srv)
 	}

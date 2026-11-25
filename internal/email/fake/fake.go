@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/change-fabric/moose/internal/email/provider"
 )
@@ -27,6 +28,21 @@ type Provider struct {
 	seq         int
 	// Err, when set, is returned by every call. Tests use it to simulate outages.
 	Err error
+	// Delay makes read calls wait this long (or until the context ends), to
+	// simulate a slow account.
+	Delay time.Duration
+}
+
+func (p *Provider) wait(ctx context.Context) error {
+	if p.Delay <= 0 {
+		return ctx.Err()
+	}
+	select {
+	case <-time.After(p.Delay):
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 type draft struct {
@@ -57,7 +73,11 @@ func New() *Provider {
 func (p *Provider) SetCapabilities(c provider.Capabilities) { p.mu.Lock(); p.caps = c; p.mu.Unlock() }
 
 // AddMailbox registers a mailbox.
-func (p *Provider) AddMailbox(m provider.Mailbox) { p.mu.Lock(); p.mailboxes = append(p.mailboxes, m); p.mu.Unlock() }
+func (p *Provider) AddMailbox(m provider.Mailbox) {
+	p.mu.Lock()
+	p.mailboxes = append(p.mailboxes, m)
+	p.mu.Unlock()
+}
 
 // AddMessage stores m. An empty ID is assigned and an empty ThreadID defaults to the ID.
 func (p *Provider) AddMessage(m provider.Message) provider.Message {
@@ -100,7 +120,10 @@ func (p *Provider) Capabilities() provider.Capabilities {
 	return p.caps
 }
 
-func (p *Provider) ListMailboxes(context.Context) ([]provider.Mailbox, error) {
+func (p *Provider) ListMailboxes(ctx context.Context) ([]provider.Mailbox, error) {
+	if err := p.wait(ctx); err != nil {
+		return nil, err
+	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.Err != nil {
@@ -110,7 +133,10 @@ func (p *Provider) ListMailboxes(context.Context) ([]provider.Mailbox, error) {
 }
 
 // Search filters newest first. The cursor is the integer offset into the result list.
-func (p *Provider) Search(_ context.Context, q provider.Query) (provider.SearchResult, error) {
+func (p *Provider) Search(ctx context.Context, q provider.Query) (provider.SearchResult, error) {
+	if err := p.wait(ctx); err != nil {
+		return provider.SearchResult{}, err
+	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.Err != nil {
@@ -192,7 +218,10 @@ func contains(list []string, s string) bool {
 	return false
 }
 
-func (p *Provider) GetMessage(_ context.Context, id string) (provider.Message, error) {
+func (p *Provider) GetMessage(ctx context.Context, id string) (provider.Message, error) {
+	if err := p.wait(ctx); err != nil {
+		return provider.Message{}, err
+	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.Err != nil {
@@ -206,7 +235,10 @@ func (p *Provider) GetMessage(_ context.Context, id string) (provider.Message, e
 	return provider.Message{}, fmt.Errorf("%w: message %s", provider.ErrNotFound, id)
 }
 
-func (p *Provider) GetThread(_ context.Context, id string) (provider.Thread, error) {
+func (p *Provider) GetThread(ctx context.Context, id string) (provider.Thread, error) {
+	if err := p.wait(ctx); err != nil {
+		return provider.Thread{}, err
+	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.Err != nil {

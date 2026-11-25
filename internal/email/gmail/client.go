@@ -24,7 +24,7 @@ import (
 const (
 	userMe         = "me"
 	defaultLimit   = 25
-	maxLimit       = 100
+	maxLimit       = provider.MaxFetch
 	maxAttachBytes = 50 << 20
 )
 
@@ -227,8 +227,8 @@ func convertDraft(d *gmail.Draft) provider.Draft {
 	return out
 }
 
-// convert maps a Gmail message to the neutral type. Only text/plain parts feed
-// BodyText; HTML is not rendered or returned.
+// convert maps a Gmail message to the neutral type. text/plain parts feed
+// BodyText and text/html parts feed BodyHTML (raw; tools convert it to text).
 func convert(m *gmail.Message) provider.Message {
 	out := provider.Message{ID: m.Id, ThreadID: m.ThreadId, Snippet: m.Snippet, Mailboxes: m.LabelIds}
 	for _, l := range m.LabelIds {
@@ -256,14 +256,14 @@ func convert(m *gmail.Message) provider.Message {
 				}
 			}
 		}
-		var body strings.Builder
-		walk(p, &out, &body)
-		out.BodyText = body.String()
+		var body, html strings.Builder
+		walk(p, &out, &body, &html)
+		out.BodyText, out.BodyHTML = body.String(), html.String()
 	}
 	return out
 }
 
-func walk(p *gmail.MessagePart, out *provider.Message, body *strings.Builder) {
+func walk(p *gmail.MessagePart, out *provider.Message, body, html *strings.Builder) {
 	switch {
 	case p.Filename != "" && p.Body != nil && p.Body.AttachmentId != "":
 		out.Attachments = append(out.Attachments, provider.AttachmentMeta{
@@ -273,9 +273,13 @@ func walk(p *gmail.MessagePart, out *provider.Message, body *strings.Builder) {
 		if b, err := decode(p.Body.Data); err == nil {
 			body.Write(b)
 		}
+	case strings.HasPrefix(p.MimeType, "text/html") && p.Body != nil && p.Body.Data != "":
+		if b, err := decode(p.Body.Data); err == nil {
+			html.Write(b)
+		}
 	}
 	for _, c := range p.Parts {
-		walk(c, out, body)
+		walk(c, out, body, html)
 	}
 }
 
@@ -318,6 +322,14 @@ func mapErr(err error) error {
 			return fmt.Errorf("%w: %v", provider.ErrAuth, err)
 		case http.StatusBadRequest:
 			return fmt.Errorf("%w: %v", provider.ErrInvalidQuery, err)
+		case http.StatusTooManyRequests:
+			return fmt.Errorf("%w: %v", provider.ErrRateLimited, err)
+		case http.StatusForbidden:
+			for _, e := range ge.Errors {
+				if e.Reason == "rateLimitExceeded" || e.Reason == "userRateLimitExceeded" {
+					return fmt.Errorf("%w: %v", provider.ErrRateLimited, err)
+				}
+			}
 		}
 		return fmt.Errorf("gmail: HTTP %s: %w", strconv.Itoa(ge.Code), err)
 	}

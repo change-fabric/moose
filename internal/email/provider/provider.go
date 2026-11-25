@@ -19,7 +19,15 @@ var (
 	ErrAuth = errors.New("provider: authorization failed")
 	// ErrInvalidQuery means a Query or cursor could not be used.
 	ErrInvalidQuery = errors.New("provider: invalid query")
+	// ErrRateLimited means the provider asked the caller to slow down (HTTP 429 or
+	// a quota error). It is transient: back off and retry.
+	ErrRateLimited = errors.New("provider: rate limited")
 )
+
+// MaxFetch is the most messages a provider fetches metadata for in one
+// Search call. Each is a separate request on Gmail, so the cap bounds the cost
+// of a search on one account.
+const MaxFetch = 25
 
 // SearchDialect names the native search syntax a provider compiles Query into.
 type SearchDialect string
@@ -85,16 +93,19 @@ type AttachmentMeta struct {
 
 // Message is one message. Header and body text are untrusted content.
 type Message struct {
-	ID          string           `json:"id"`
-	ThreadID    string           `json:"thread_id,omitempty"`
-	Mailboxes   []string         `json:"mailboxes,omitempty"`
-	From        Address          `json:"from"`
-	To          []Address        `json:"to,omitempty"`
-	Cc          []Address        `json:"cc,omitempty"`
-	Subject     string           `json:"subject"`
-	Date        time.Time        `json:"date"`
-	Snippet     string           `json:"snippet,omitempty"`
-	BodyText    string           `json:"body_text,omitempty"`
+	ID        string    `json:"id"`
+	ThreadID  string    `json:"thread_id,omitempty"`
+	Mailboxes []string  `json:"mailboxes,omitempty"`
+	From      Address   `json:"from"`
+	To        []Address `json:"to,omitempty"`
+	Cc        []Address `json:"cc,omitempty"`
+	Subject   string    `json:"subject"`
+	Date      time.Time `json:"date"`
+	Snippet   string    `json:"snippet,omitempty"`
+	BodyText  string    `json:"body_text,omitempty"`
+	// BodyHTML is the HTML alternative, raw. Tools convert it to text when
+	// BodyText is empty; it is never returned to the caller as HTML.
+	BodyHTML    string           `json:"body_html,omitempty"`
 	Unread      bool             `json:"unread"`
 	Attachments []AttachmentMeta `json:"attachments,omitempty"`
 }
