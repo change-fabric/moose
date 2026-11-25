@@ -197,15 +197,15 @@ func TestOAuthProtectsMCPAndServesTheAuthorizationServer(t *testing.T) {
 	srv := httptest.NewServer(newHandlerAuth("t", w.oauth.Protect, registerTools(w, cfg), mounts...))
 	defer srv.Close()
 
-	res, err := http.Post(srv.URL+"/mcp", "application/json", strings.NewReader("{}"))
+	res, err := http.Post(srv.URL+"/email/mcp", "application/json", strings.NewReader("{}"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	res.Body.Close()
-	if res.StatusCode != http.StatusUnauthorized || !strings.Contains(res.Header.Get("WWW-Authenticate"), "/.well-known/oauth-protected-resource/mcp") {
+	if res.StatusCode != http.StatusUnauthorized || !strings.Contains(res.Header.Get("WWW-Authenticate"), "/.well-known/oauth-protected-resource/email/mcp") {
 		t.Fatalf("/mcp without a token = %d %q, want 401 pointing at the resource metadata", res.StatusCode, res.Header.Get("WWW-Authenticate"))
 	}
-	for _, p := range []string{"/.well-known/oauth-authorization-server", "/.well-known/oauth-protected-resource/mcp", "/.well-known/oauth-protected-resource"} {
+	for _, p := range []string{"/.well-known/oauth-authorization-server", "/.well-known/oauth-protected-resource/email/mcp", "/.well-known/oauth-protected-resource"} {
 		res, err = http.Get(srv.URL + p)
 		if err != nil {
 			t.Fatal(err)

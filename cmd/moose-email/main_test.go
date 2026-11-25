@@ -29,7 +29,7 @@ func TestMCPInitializesWithNoTools(t *testing.T) {
 	defer srv.Close()
 	ctx := context.Background()
 	cs, err := sdk.NewClient(&sdk.Implementation{Name: "c", Version: "1"}, nil).
-		Connect(ctx, &sdk.StreamableClientTransport{Endpoint: srv.URL + "/mcp"}, nil)
+		Connect(ctx, &sdk.StreamableClientTransport{Endpoint: srv.URL + "/email/mcp"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

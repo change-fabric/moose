@@ -132,7 +132,7 @@ func newHandlerAuth(version string, protect func(http.Handler) http.Handler, reg
 	if protect != nil {
 		mcp = protect(mcp)
 	}
-	mux.Handle(mcpkit.Path, mcp)
+	mux.Handle(oauthas.MCPPath, mcp)
 	for _, m := range mounts {
 		mux.Handle(m.pattern, m.handler)
 	}

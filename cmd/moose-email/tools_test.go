@@ -59,7 +59,7 @@ func TestListAccountsThroughTheProtectedEndpoint(t *testing.T) {
 	list := func(token string) []string {
 		t.Helper()
 		cs, err := sdk.NewClient(&sdk.Implementation{Name: "c", Version: "1"}, nil).Connect(ctx, &sdk.StreamableClientTransport{
-			Endpoint: srv.URL + "/mcp", HTTPClient: &http.Client{Transport: bearer{token}},
+			Endpoint: srv.URL + "/email/mcp", HTTPClient: &http.Client{Transport: bearer{token}},
 		}, nil)
 		if err != nil {
 			t.Fatal(err)

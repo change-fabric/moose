@@ -105,7 +105,7 @@ locals {
   # is not named here is a 404 from API Gateway and never reaches a function.
   email_routes = [
     "GET /healthz",
-    "ANY /mcp",
+    "ANY /email/mcp",
     "ANY /.well-known/{proxy+}",
     "ANY /register",
     "GET /authorize",

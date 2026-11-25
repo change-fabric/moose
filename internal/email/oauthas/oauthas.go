@@ -59,8 +59,9 @@ const (
 	AuthorizePath  = "/authorize"
 	PollPath       = "/authorize/poll"
 	TokenPath      = "/token"
-	// MCPPath is the protected resource.
-	MCPPath = "/mcp"
+	// MCPPath is the protected resource. Each moose module serves MCP under
+	// its own prefix on the shared host, so a later module adds /drive/mcp.
+	MCPPath = "/email/mcp"
 )
 
 // ScopeMCP is the one scope this server issues.

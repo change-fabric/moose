@@ -5,7 +5,7 @@ output "account_id" {
 
 output "mcp_url" {
   description = "Connector URL for Claude.ai and Claude Code."
-  value       = "${local.origin}/mcp"
+  value       = "${local.origin}/email/mcp"
 }
 
 output "google_redirect_uri" {

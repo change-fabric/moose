@@ -392,7 +392,7 @@ func (e *env) issue() (clientID string, tok tokenOut) {
 
 func (e *env) mcpStatus(token string) int {
 	e.t.Helper()
-	req, _ := http.NewRequest(http.MethodPost, e.base+"/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"t","version":"1"}}}`))
+	req, _ := http.NewRequest(http.MethodPost, e.base+"/email/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"t","version":"1"}}}`))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json, text/event-stream")
 	if token != "" {
@@ -426,13 +426,13 @@ func TestFullFlowRegisterAuthorizeApproveTokenMCPRefreshReuse(t *testing.T) {
 	e := newEnv(t)
 
 	// /mcp is closed without a token, and points at the resource metadata.
-	res, err := http.Post(e.base+"/mcp", "application/json", strings.NewReader("{}"))
+	res, err := http.Post(e.base+"/email/mcp", "application/json", strings.NewReader("{}"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	res.Body.Close()
 	wantStatus(t, "unauthenticated /mcp", res.StatusCode, 401)
-	if wa := res.Header.Get("WWW-Authenticate"); !strings.Contains(wa, e.base+"/.well-known/oauth-protected-resource/mcp") {
+	if wa := res.Header.Get("WWW-Authenticate"); !strings.Contains(wa, e.base+"/.well-known/oauth-protected-resource/email/mcp") {
 		t.Fatalf("WWW-Authenticate = %q, want the resource metadata URL", wa)
 	}
 
@@ -474,7 +474,7 @@ func (e *env) connectMCP(token string) *sdk.ClientSession {
 	e.t.Helper()
 	hc := &http.Client{Transport: bearer{token, http.DefaultTransport}}
 	cs, err := sdk.NewClient(&sdk.Implementation{Name: "c", Version: "1"}, nil).
-		Connect(context.Background(), &sdk.StreamableClientTransport{Endpoint: e.base + "/mcp", HTTPClient: hc}, nil)
+		Connect(context.Background(), &sdk.StreamableClientTransport{Endpoint: e.base + "/email/mcp", HTTPClient: hc}, nil)
 	if err != nil {
 		e.t.Fatal(err)
 	}
@@ -496,14 +496,14 @@ func (b bearer) RoundTrip(r *http.Request) (*http.Response, error) {
 
 func TestMetadata(t *testing.T) {
 	e := newEnv(t)
-	for _, p := range []string{"/.well-known/oauth-protected-resource", "/.well-known/oauth-protected-resource/mcp"} {
+	for _, p := range []string{"/.well-known/oauth-protected-resource", "/.well-known/oauth-protected-resource/email/mcp"} {
 		res, body := e.get(http.DefaultClient, e.base+p)
 		wantStatus(t, p, res.StatusCode, 200)
 		var m struct {
 			Resource string   `json:"resource"`
 			AS       []string `json:"authorization_servers"`
 		}
-		if err := json.Unmarshal([]byte(body), &m); err != nil || m.Resource != e.base+"/mcp" || len(m.AS) != 1 || m.AS[0] != e.base {
+		if err := json.Unmarshal([]byte(body), &m); err != nil || m.Resource != e.base+"/email/mcp" || len(m.AS) != 1 || m.AS[0] != e.base {
 			t.Fatalf("%s = %s", p, body)
 		}
 	}
@@ -797,14 +797,14 @@ func TestTokenForAnotherResourceIsRejectedAtMCP(t *testing.T) {
 
 	dash := "dashboard-cookie-value"
 	_ = e.st.CreateSession(context.Background(), store.Session{
-		Hash: store.HashSecret(dash), Kind: store.SessionDashboard, Owner: "pat", Audience: e.base + "/mcp",
+		Hash: store.HashSecret(dash), Kind: store.SessionDashboard, Owner: "pat", Audience: e.base + "/email/mcp",
 		Scope: "mcp", Created: time.Now(), Expires: time.Now().Add(time.Hour),
 	})
 	wantStatus(t, "a dashboard session used as a bearer token", e.mcpStatus(dash), 401)
 
 	expired := "mat_expired"
 	_ = e.st.CreateSession(context.Background(), store.Session{
-		Hash: store.HashSecret(expired), Kind: store.SessionAccess, Owner: "pat", Audience: e.base + "/mcp",
+		Hash: store.HashSecret(expired), Kind: store.SessionAccess, Owner: "pat", Audience: e.base + "/email/mcp",
 		Scope: "mcp", Created: time.Now().Add(-2 * time.Hour), Expires: time.Now().Add(-time.Hour),
 	})
 	wantStatus(t, "expired token", e.mcpStatus(expired), 401)
@@ -819,7 +819,7 @@ func TestResourceIsBoundThroughTheGrant(t *testing.T) {
 
 	// An explicit, correct resource works and is what the token is audienced to.
 	b := e.browser()
-	res, body := e.get(b, e.authorizeURL(authParams{clientID: clientID, redirect: claudeRedir, challenge: challenge, resource: e.base + "/mcp"}))
+	res, body := e.get(b, e.authorizeURL(authParams{clientID: clientID, redirect: claudeRedir, challenge: challenge, resource: e.base + "/email/mcp"}))
 	if res.StatusCode != 200 {
 		t.Fatalf("authorize with the right resource = %d %s", res.StatusCode, body)
 	}
@@ -827,11 +827,11 @@ func TestResourceIsBoundThroughTheGrant(t *testing.T) {
 	_, p := e.poll(b)
 	u, _ := url.Parse(p.Redirect)
 	f := codeForm(clientID, claudeRedir, u.Query().Get("code"), verifier)
-	f.Set("resource", e.base+"/mcp")
+	f.Set("resource", e.base+"/email/mcp")
 	status, tok := e.token(f)
 	wantStatus(t, "token with the matching resource", status, 200)
 	sess, err := e.st.GetSession(context.Background(), store.HashSecret(tok.Access))
-	if err != nil || sess.Audience != e.base+"/mcp" {
+	if err != nil || sess.Audience != e.base+"/email/mcp" {
 		t.Fatalf("session audience = %q, %v", sess.Audience, err)
 	}
 

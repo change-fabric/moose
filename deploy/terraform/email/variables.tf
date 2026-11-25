@@ -22,7 +22,7 @@ variable "env" {
 }
 
 variable "domain_name" {
-  description = "Public hostname for /mcp and /approve (for example moose.changefabric.org). A second tenant sets its own."
+  description = "Public hostname for /email/mcp and /approve (for example moose.changefabric.org). A second tenant sets its own."
   type        = string
 }
 
