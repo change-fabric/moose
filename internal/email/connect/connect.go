@@ -52,6 +52,8 @@ const SessionCookie = "moose_session"
 
 const (
 	csrfCookie    = "moose_csrf"
+	// LoginPath is the dashboard sign-in, served by the authorization server.
+	LoginPath = "/connect/login"
 	providerGmail = "gmail"
 )
 
@@ -176,7 +178,14 @@ func secure(next http.Handler) http.Handler {
 func (s *Server) owner(w http.ResponseWriter, r *http.Request) (string, bool) {
 	owner, ok := s.d.Auth.Owner(r)
 	if !ok || owner == "" {
-		s.fail(w, http.StatusUnauthorized, "Sign in first", "This page needs a dashboard session. Open /connect/login, approve the sign-in on your phone, then come back to this page.")
+		// A plain page load goes straight to sign-in, which returns here once
+		// approved. A form post cannot be replayed, so it explains instead.
+		if r.Method == http.MethodGet {
+			http.Redirect(w, r, LoginPath, http.StatusSeeOther)
+			return "", false
+		}
+		s.failWith(w, http.StatusUnauthorized, "Your session ended",
+			"Sign in again with your passkey, then retry. Nothing was changed.", LoginPath, "Sign in")
 		return "", false
 	}
 	return owner, true

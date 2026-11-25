@@ -15,6 +15,7 @@ import (
 	"github.com/change-fabric/moose/internal/approver/api"
 	"github.com/change-fabric/moose/internal/approver/receipt"
 	"github.com/change-fabric/moose/internal/email/store"
+	"github.com/change-fabric/moose/internal/webui"
 )
 
 var challengeRE = regexp.MustCompile(`^[A-Za-z0-9_-]{43}$`)
@@ -292,21 +293,24 @@ var pageTmpl = template.Must(template.New("wait").Parse(`<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Sign in to moose</title>
 <style>
-:root{color-scheme:light dark;--bg:#fff;--fg:#14171a;--mut:#4a525a;--card:#f3f5f7;--line:#c9d0d6;--acc:#0b57d0}
-@media (prefers-color-scheme:dark){:root{--bg:#101316;--fg:#eef1f3;--mut:#aab3ba;--card:#1a1f24;--line:#39424a;--acc:#8ab4f8}}
+` + webui.Tokens + `
 body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.5 system-ui,sans-serif}
 main{max-width:30rem;margin:0 auto;padding:2rem 16px}
 h1{font-size:1.4rem;margin:0 0 .5rem}
 .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:1rem;margin:1rem 0}
-dl{margin:0;display:grid;grid-template-columns:auto 1fr;gap:.25rem 1rem}dt{color:var(--mut)}dd{margin:0;overflow-wrap:anywhere}
+dl{margin:0;display:grid;grid-template-columns:auto 1fr;gap:.25rem 1rem}dt{color:var(--muted)}dd{margin:0;overflow-wrap:anywhere}
 .qr{background:#fff;padding:12px;border-radius:8px;width:fit-content;margin:0 auto}.qr svg{display:block;width:220px;height:220px}
-a{color:var(--acc)}#status{font-weight:600}
+a{color:var(--accent)}#status{font-weight:600}
+.btn{display:inline-flex;align-items:center;justify-content:center;min-height:44px;padding:0 1.1rem;border-radius:8px;background:var(--accent);color:var(--accent-ink);font-weight:600;text-decoration:none}
+.here{display:none}
+@media (max-width:40rem),(pointer:coarse){.here{display:block}.here .btn{width:100%}.qr,.scan{display:none}}
 </style></head><body><main>
-<h1>Approve this sign-in on your phone</h1>
-<p>{{.Lead}} Scan the code with your phone, check the details, and approve with your passkey.</p>
+<h1>Approve this sign-in with your passkey</h1>
+<p>{{.Lead}} Check the details, then approve with the passkey on your phone.</p>
+<p class="here"><a class="btn" href="{{.URL}}" rel="noopener noreferrer" target="_blank">Approve on this device</a></p>
 <div class="card"><dl><dt>Application</dt><dd>{{.Client}}</dd><dt>Returns to</dt><dd>{{.Host}}</dd></dl></div>
 <div class="qr">{{.QR}}</div>
-<p>No camera handy? <a href="{{.URL}}" rel="noopener noreferrer" target="_blank">Open the approval page</a> on a device that holds your passkey.</p>
+<p class="scan">On a computer? Scan the code with your phone, or <a href="{{.URL}}" rel="noopener noreferrer" target="_blank">open the approval page</a> on a device that holds your passkey.</p>
 <p id="status" role="status" aria-live="polite">Waiting for approval</p>
 <noscript><p>This page needs JavaScript to notice the approval. Enable it, then reload.</p></noscript>
 <script nonce="{{.Nonce}}">
@@ -329,7 +333,7 @@ a{color:var(--acc)}#status{font-weight:600}
 var errTmpl = template.Must(template.New("err").Parse(`<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{{.Title}}</title>
-<style>:root{color-scheme:light dark}body{font:16px/1.5 system-ui,sans-serif;margin:0}main{max-width:30rem;margin:0 auto;padding:2rem 16px}</style>
+<style>` + webui.Tokens + `body{font:16px/1.5 system-ui,sans-serif;margin:0;background:var(--bg);color:var(--fg)}main{max-width:30rem;margin:0 auto;padding:2rem 16px}</style>
 </head><body><main><h1>{{.Title}}</h1><p>{{.Detail}}</p></main></body></html>`))
 
 func (s *Server) pageHeaders(w http.ResponseWriter, nonce string) {

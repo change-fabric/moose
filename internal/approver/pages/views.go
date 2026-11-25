@@ -9,6 +9,7 @@ import (
 
 	"github.com/change-fabric/moose/internal/approver/api"
 	"github.com/change-fabric/moose/internal/email/palette"
+	"github.com/change-fabric/moose/internal/webui"
 )
 
 // css is the page stylesheet. It is inlined with a per-response nonce, so the
@@ -24,9 +25,7 @@ func css() string {
 	return b.String()
 }
 
-const baseCSS = `
-:root{color-scheme:light;--bg:#f6f5f1;--fg:#1c1b19;--muted:#55524a;--card:#fff;--line:#c9c5b8;--accent:#0b4f99;--warn-bg:#fff3d6;--warn-fg:#5c3b00;--bad:#9b1c12;--ok:#17613a}
-*{box-sizing:border-box}
+const baseCSS = webui.Tokens + webui.Base + `
 html{font-size:100%}
 body{margin:0;background:var(--bg);color:var(--fg);font:1rem/1.5 system-ui,-apple-system,"Segoe UI",sans-serif}
 main{max-width:46rem;margin:0 auto;padding:1rem}
@@ -34,10 +33,10 @@ h1{font-size:1.4rem;margin:.5rem 0 1rem}
 h2{font-size:1.15rem;margin:1.25rem 0 .5rem}
 .card{background:var(--card);border:1px solid var(--line);border-radius:.5rem;padding:1rem;margin:1rem 0}
 .banner{border-radius:.5rem;overflow:hidden;margin:1rem 0;border:2px solid var(--fg)}
-.banner .strip{height:.75rem;background-color:var(--fg);color:#fff}
-.banner .strip.pat-stripes{background-image:repeating-linear-gradient(45deg,#fff 0 .4rem,transparent .4rem .8rem)}
-.banner .strip.pat-dots{background-image:radial-gradient(#fff 28%,transparent 30%);background-size:.75rem .75rem}
-.banner .strip.pat-checks{background-image:conic-gradient(#fff 25%,transparent 0 50%,#fff 0 75%,transparent 0);background-size:1.5rem 1.5rem}
+.banner .strip{height:.75rem;background-color:var(--fg);color:var(--card)}
+.banner .strip.pat-stripes{background-image:repeating-linear-gradient(45deg,var(--card) 0 .4rem,transparent .4rem .8rem)}
+.banner .strip.pat-dots{background-image:radial-gradient(var(--card) 28%,transparent 30%);background-size:.75rem .75rem}
+.banner .strip.pat-checks{background-image:conic-gradient(var(--card) 25%,transparent 0 50%,var(--card) 0 75%,transparent 0);background-size:1.5rem 1.5rem}
 .banner .strip.pat-none{display:none}
 .banner-body{display:flex;gap:1rem;align-items:center;padding:1rem}
 .monogram{flex:none;width:3.5rem;height:3.5rem;border-radius:50%;border:3px solid currentColor;display:flex;align-items:center;justify-content:center;font-size:1.75rem;font-weight:700}
@@ -50,18 +49,16 @@ h2{font-size:1.15rem;margin:1.25rem 0 .5rem}
 .lookalike{overflow-wrap:anywhere;background:var(--warn-bg);color:var(--warn-fg);border:2px solid var(--warn-fg);border-radius:.5rem;padding:.75rem 1rem;margin:1rem 0}
 .lookalike p{margin:.25rem 0}
 .lookalike .mono{font-family:ui-monospace,Menlo,Consolas,monospace;overflow-wrap:anywhere}
-mark{background:var(--warn-fg);color:#fff;padding:0 .1rem;border-radius:.15rem}
+mark{background:var(--warn-fg);color:var(--card);padding:0 .1rem;border-radius:.15rem}
 dl{display:grid;grid-template-columns:max-content 1fr;gap:.25rem 1rem;margin:0}
 dt{color:var(--muted)}
 dd{margin:0;overflow-wrap:anywhere}
-pre.body{white-space:pre-wrap;overflow-wrap:anywhere;background:#f3f1ea;border:1px solid var(--line);border-radius:.375rem;padding:.75rem;margin:.5rem 0;font:.95rem/1.45 ui-monospace,Menlo,Consolas,monospace;max-height:28rem;overflow:auto}
+pre.body{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px solid var(--line);border-radius:.375rem;padding:.75rem;margin:.5rem 0;font:.95rem/1.45 ui-monospace,Menlo,Consolas,monospace;max-height:28rem;overflow:auto}
 .chip{display:inline-block;border:1px solid var(--warn-fg);color:var(--warn-fg);background:var(--warn-bg);border-radius:1rem;padding:0 .6rem;font-size:.875rem;margin:.1rem .25rem .1rem 0}
 .sha{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.85rem;overflow-wrap:anywhere}
 .actions{display:flex;flex-wrap:wrap;gap:.75rem;margin:1rem 0}
-button,.btn{min-height:2.75rem;min-width:2.75rem;padding:.5rem 1.1rem;font:inherit;font-weight:600;border-radius:.4rem;border:2px solid var(--fg);background:#fff;color:var(--fg);cursor:pointer;text-decoration:none;display:inline-flex;align-items:center}
-button.primary{background:var(--fg);color:#fff}
+button,.btn{min-height:2.75rem;min-width:2.75rem;padding:.5rem 1.1rem;font:inherit;font-weight:600;border-radius:.4rem;border:2px solid var(--fg);background:var(--card);color:var(--fg);cursor:pointer;text-decoration:none;display:inline-flex;align-items:center}
 button.danger{border-color:var(--bad);color:var(--bad)}
-button:focus-visible,a:focus-visible,input:focus-visible{outline:3px solid var(--accent);outline-offset:2px}
 button[hidden],[hidden]{display:none!important}
 button:disabled{opacity:.55;cursor:not-allowed}
 .note{color:var(--muted)}

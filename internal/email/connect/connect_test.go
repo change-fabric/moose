@@ -273,8 +273,10 @@ func TestEveryRouteNeedsADashboardSession(t *testing.T) {
 	acct := r.seed("Work", "w@x.example", 0, store.StatusOK)
 	csrf := r.csrf()
 	hit := func(name string, do func() *http.Response) {
-		if res := do(); res.StatusCode != http.StatusUnauthorized {
-			t.Errorf("%s without a session = %d, want 401", name, res.StatusCode)
+		res := do()
+		signIn := res.StatusCode == http.StatusSeeOther && res.Header.Get("Location") == connect.LoginPath
+		if res.StatusCode != http.StatusUnauthorized && !signIn {
+			t.Errorf("%s without a session = %d %q, want 401 or a redirect to sign-in", name, res.StatusCode, res.Header.Get("Location"))
 		}
 	}
 	for _, how := range []string{"no cookie", "access token kind", "revoked", "expired"} {
@@ -599,7 +601,7 @@ func TestPageRowsAndControls(t *testing.T) {
 	}
 	for _, want := range []string{
 		"alpha@x.example", palette.At(0).Name, palette.At(1).Name, palette.At(2).Name, palette.At(3).Name, // address and colour name per row
-		"Needs reconnect", "Connected", "Disconnected", "Last sync", "never",
+		"Needs reconnect", "Access verified", "Disconnected", "Not used by Claude yet",
 		">Reconnect<",
 		"/connect/accounts/" + ok.ID + "/enable-send", "/connect/accounts/" + sendOn.ID + "/disable-send",
 		"/connect/accounts/" + reauth.ID + "/disconnect", "Type <b>alpha@x.example</b> to confirm",
