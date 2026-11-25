@@ -148,7 +148,7 @@ func (s *Server) page(w http.ResponseWriter, r *http.Request) {
 	http.SetCookie(w, s.cookie(csrfCookie, csrf, 3600, http.SameSiteStrictMode))
 	v := pageView{CSRF: csrf, Rows: rows(accts, s.d.Approver != nil)}
 	if s.d.Approver == nil {
-		v.SendNote = "Enabling send needs the approver, which this deployment has not configured."
+		v.SendNote = "Every account is read-only for now. Turning on send with your passkey comes in a later update."
 	}
 	q := r.URL.Query()
 	for key, tmpl := range map[string]string{
@@ -208,20 +208,25 @@ button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
 button.danger{color:var(--bad);border-color:var(--bad)}
 button:focus-visible,input:focus-visible,a:focus-visible{outline:3px solid var(--accent);outline-offset:2px}
 .notice{border:1px solid var(--ok);color:var(--ok);border-radius:8px;padding:.6rem .9rem;margin-bottom:1rem}
-.note{color:var(--warn)}
+.note{color:var(--muted);border-left:3px solid var(--line);padding:.1rem 0 .1rem .75rem;margin:0 0 1.25rem}
 .err{color:var(--bad)}
 .add{margin-top:1.5rem;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:1rem}
-.add label{display:block;font-weight:600;margin-bottom:.25rem}
+.add label{display:block;font-weight:600;margin-bottom:.35rem}
+.add form{display:flex;flex-wrap:wrap;gap:.5rem;align-items:stretch;width:100%}
+.add input[type=text]{flex:1 1 14rem;min-width:0}
+.add .hint{color:var(--muted);font-size:.9rem;margin:.75rem 0 0}
+.add ol{color:var(--muted);font-size:.9rem;margin:.25rem 0 0;padding-left:1.25rem}
+.empty{border:1px dashed var(--line);border-radius:10px;padding:1rem;color:var(--muted);margin:0}
 details summary{cursor:pointer;min-height:44px;display:flex;align-items:center}
 @media (prefers-reduced-motion:no-preference){button{transition:background-color .15s}}
 `
 
 var pageTmpl = template.Must(template.New("page").Parse(`<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Connect Google</title><style>` + css + `</style></head>
+<title>moose accounts</title><style>` + css + `</style></head>
 <body><main>
 <h1>Connected accounts</h1>
-<p class="lede">Every Gmail account behind this moose connection. New accounts are read-only until you enable send with your passkey.</p>
+<p class="lede">The Gmail accounts Claude can reach through this moose connection.</p>
 {{if .Notice}}<p class="notice" role="status">{{.Notice}}</p>{{end}}
 {{if .SendNote}}<p class="note">{{.SendNote}}</p>{{end}}
 {{if .Rows}}<ul class="accts">
@@ -252,12 +257,14 @@ var pageTmpl = template.Must(template.New("page").Parse(`<!doctype html>
    <button class="danger" type="submit">Disconnect</button></form>
  </details>{{end}}
 </section></li>{{end}}
-</ul>{{else}}<p>No accounts yet.</p>{{end}}
+</ul>{{else}}<p class="empty">No accounts connected yet. Connect your first Gmail account below.</p>{{end}}
 <section class="add" aria-labelledby="add-h"><h2 id="add-h" style="font-size:1.1rem;margin:0 0 .5rem">Connect a Google account</h2>
+<label for="nickname">Nickname <span style="font-weight:400;color:var(--muted)">(optional, e.g. Personal or Work)</span></label>
 <form method="post" action="/connect/google/start"><input type="hidden" name="csrf" value="{{.CSRF}}">
-<div><label for="nickname">Nickname (optional)</label><input type="text" id="nickname" name="nickname" maxlength="24" autocomplete="off"></div>
+<input type="text" id="nickname" name="nickname" maxlength="24" autocomplete="off" placeholder="Personal">
 <button class="primary" type="submit">Connect Google account</button></form>
-<p class="lede" style="margin:.75rem 0 0">Google will ask for permission to read mail and manage drafts. If it warns the app is unverified, that is expected for your own deployment.</p>
+<p class="hint">Google asks for permission to read mail and manage drafts. Because this is your own private app, Google first shows an unverified-app warning:</p>
+<ol><li>Click <b>Advanced</b>.</li><li>Click <b>Go to moose.changefabric.org (unsafe)</b>.</li><li>Allow both permissions.</li></ol>
 </section>
 </main></body></html>`))
 

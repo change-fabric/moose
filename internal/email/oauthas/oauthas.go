@@ -237,7 +237,7 @@ func noStore(next http.Handler) http.Handler {
 		h.Set("Cache-Control", "no-store")
 		h.Set("Pragma", "no-cache")
 		h.Set("X-Content-Type-Options", "nosniff")
-		h.Set("Referrer-Policy", "no-referrer")
+		h.Set("Referrer-Policy", "same-origin")
 		next.ServeHTTP(w, r)
 	})
 }

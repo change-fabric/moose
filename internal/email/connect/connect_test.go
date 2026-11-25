@@ -779,7 +779,7 @@ func TestEnableSendWithoutApprover(t *testing.T) {
 	c := &http.Client{Jar: jar, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	res, _ := c.Get(ts.URL + connect.PagePath)
 	body, _ := io.ReadAll(res.Body)
-	if strings.Contains(string(body), "enable-send") || !strings.Contains(string(body), "approver") {
+	if strings.Contains(string(body), "enable-send") || !strings.Contains(string(body), "read-only for now") {
 		t.Error("page offers Enable send without an approver")
 	}
 	u, _ := url.Parse(ts.URL + connect.PagePath)

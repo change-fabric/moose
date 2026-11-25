@@ -167,7 +167,7 @@ func secure(next http.Handler) http.Handler {
 		h := w.Header()
 		h.Set("Cache-Control", "no-store")
 		h.Set("X-Content-Type-Options", "nosniff")
-		h.Set("Referrer-Policy", "no-referrer")
+		h.Set("Referrer-Policy", "same-origin")
 		h.Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'")
 		next.ServeHTTP(w, r)
 	})
@@ -196,7 +196,10 @@ func (s *Server) ownerPost(w http.ResponseWriter, r *http.Request) (string, bool
 }
 
 func (s *Server) csrfOK(r *http.Request) bool {
+	// Referrer-Policy is same-origin, so a same-origin form post carries a real
+	// Origin; "null" (or any other value) is refused.
 	if o := r.Header.Get("Origin"); o != "" && o != s.origin {
+		s.d.Log.Warn("connect: csrf refused", "reason", "origin", "origin", o)
 		return false
 	}
 	if sf := r.Header.Get("Sec-Fetch-Site"); sf != "" && sf != "same-origin" && sf != "none" {
@@ -204,6 +207,7 @@ func (s *Server) csrfOK(r *http.Request) bool {
 	}
 	c, err := r.Cookie(csrfCookie)
 	if err != nil || c.Value == "" {
+		s.d.Log.Warn("connect: csrf refused", "reason", "no cookie")
 		return false
 	}
 	return subtle.ConstantTimeCompare([]byte(c.Value), []byte(r.PostFormValue("csrf"))) == 1
