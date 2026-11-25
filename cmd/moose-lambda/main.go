@@ -21,6 +21,8 @@ import (
 	"github.com/awslabs/aws-lambda-go-api-proxy/httpadapter"
 
 	"github.com/change-fabric/moose/internal/bootstrap"
+	"github.com/change-fabric/moose/internal/config"
+	"github.com/change-fabric/moose/internal/drive/wiring"
 )
 
 // version is set at build time with -ldflags "-X main.version=...".
@@ -46,6 +48,7 @@ func newHandler(ctx context.Context, log *slog.Logger) (http.Handler, error) {
 	sm := secretsmanager.NewFromConfig(awsCfg)
 	rt, err := bootstrap.FromEnv(ctx, bootstrap.Options{
 		Logger:       log,
+		Validate:     config.Config.ValidateDrive,
 		DynamoClient: dynamodb.NewFromConfig(awsCfg),
 		Secret: func(ctx context.Context, arn string) ([]byte, error) {
 			out, err := sm.GetSecretValue(ctx, &secretsmanager.GetSecretValueInput{SecretId: aws.String(arn)})
@@ -64,7 +67,7 @@ func newHandler(ctx context.Context, log *slog.Logger) (http.Handler, error) {
 	if err != nil {
 		return nil, err
 	}
-	return rt.Handler(version), nil
+	return wiring.Handler(ctx, rt, version)
 }
 
 // proxy adapts h to REST API (v1) proxy events.

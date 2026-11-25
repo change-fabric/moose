@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"regexp"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 
@@ -27,33 +28,56 @@ const (
 
 	StoreSQLite = "sqlite"
 	StoreDynamo = "dynamo"
+
+	ProviderGmail = "gmail"
 )
 
-// Config is the full runtime configuration.
+// Config is the full runtime configuration. The common fields apply to every
+// server. Each server also has its own section, which is nil unless the file
+// sets it; a server calls its own validator (ValidateDrive, ValidateEmail or
+// ValidateApprover) and refuses to start when its section is missing or bad.
+// Load validates only the common part, so one file may carry the sections of
+// servers that run elsewhere.
 type Config struct {
-	Env        string                     `yaml:"env"`
-	Tailnet    string                     `yaml:"tailnet"`
-	Hostname   string                     `yaml:"hostname"`
-	Identity   Identity                   `yaml:"identity"`
-	Connectors map[string]ConnectorConfig `yaml:"connectors"`
-	Redaction  Redaction                  `yaml:"redaction"`
-	Store      Store                      `yaml:"store"`
+	Env      string   `yaml:"env"`
+	Tailnet  string   `yaml:"tailnet"`
+	Hostname string   `yaml:"hostname"`
+	Identity Identity `yaml:"identity"`
+	Store    Store    `yaml:"store"`
+
+	Drive    *Drive    `yaml:"drive"`
+	Email    *Email    `yaml:"email"`
+	Approver *Approver `yaml:"approver"`
 
 	// Env-only settings (secrets and runtime wiring).
-	TSAuthKey          string `yaml:"-"`
-	TSNetStateDir      string `yaml:"-"`
-	BootstrapAdmin     string `yaml:"-"`
-	GDriveKeyFile      string `yaml:"-"`
-	GDriveKeySecretARN string `yaml:"-"`
-	RelaySecretARN     string `yaml:"-"`
-	Listen             string `yaml:"-"`
-	DevIdentity        string `yaml:"-"`
+	TSAuthKey      string `yaml:"-"`
+	TSNetStateDir  string `yaml:"-"`
+	BootstrapAdmin string `yaml:"-"`
+	RelaySecretARN string `yaml:"-"`
+	Listen         string `yaml:"-"`
+	DevIdentity    string `yaml:"-"`
 }
 
 type Identity struct {
 	Mode          string   `yaml:"mode"`
 	AllowedLogins []string `yaml:"allowed_logins"`
 	AllowedTags   []string `yaml:"allowed_tags"`
+}
+
+type Store struct {
+	Kind        string `yaml:"kind"`
+	SQLitePath  string `yaml:"sqlite_path"`
+	DynamoTable string `yaml:"dynamo_table"`
+}
+
+// Drive configures moose-drive.
+type Drive struct {
+	Connectors map[string]ConnectorConfig `yaml:"connectors"`
+	Redaction  Redaction                  `yaml:"redaction"`
+
+	// Env-only settings.
+	GDriveKeyFile      string `yaml:"-"`
+	GDriveKeySecretARN string `yaml:"-"`
 }
 
 type ConnectorConfig struct {
@@ -65,28 +89,39 @@ type Redaction struct {
 	Patterns []string `yaml:"patterns"`
 }
 
-type Store struct {
-	Kind        string `yaml:"kind"`
-	SQLitePath  string `yaml:"sqlite_path"`
-	DynamoTable string `yaml:"dynamo_table"`
+// Email configures moose-email.
+type Email struct {
+	Provider string    `yaml:"provider"`
+	Send     EmailSend `yaml:"send"`
 }
 
-// Default returns the built-in defaults.
+// EmailSend gates live sending. It stays false until an end-to-end approval
+// has been verified.
+type EmailSend struct {
+	Live bool `yaml:"live"`
+}
+
+// Approver configures moose-approver.
+type Approver struct {
+	RPID   string `yaml:"rp_id"`
+	Origin string `yaml:"origin"`
+}
+
+// Default returns the built-in defaults. Per-server sections are nil: a
+// section exists only when the file asks for it.
 func Default() Config {
 	return Config{
-		Env:      EnvDev,
-		Hostname: "moose",
-		Identity: Identity{Mode: IdentityTSNet},
-		Connectors: map[string]ConnectorConfig{
-			"gdrive": {Enabled: true, MaxDocumentBytes: 2 << 20},
-		},
+		Env:           EnvDev,
+		Hostname:      "moose",
+		Identity:      Identity{Mode: IdentityTSNet},
 		Store:         Store{Kind: StoreSQLite, SQLitePath: "/data/moose.db"},
 		TSNetStateDir: "/data/tsnet",
 	}
 }
 
 // Load reads the file named by MOOSE_CONFIG (if set), applies env overrides
-// via getenv, and validates the result.
+// via getenv, and validates the common settings. Callers then validate their
+// own section.
 func Load(getenv func(string) string) (Config, error) {
 	cfg := Default()
 	if path := getenv("MOOSE_CONFIG"); path != "" {
@@ -125,17 +160,21 @@ func applyEnv(cfg *Config, getenv func(string) string) {
 	set(&cfg.TSAuthKey, "TS_AUTHKEY")
 	set(&cfg.TSNetStateDir, "MOOSE_TSNET_STATE_DIR")
 	set(&cfg.BootstrapAdmin, "MOOSE_BOOTSTRAP_ADMIN")
-	set(&cfg.GDriveKeyFile, "MOOSE_GDRIVE_KEY_FILE")
-	set(&cfg.GDriveKeySecretARN, "MOOSE_GDRIVE_KEY_SECRET_ARN")
 	set(&cfg.RelaySecretARN, "MOOSE_RELAY_SECRET_ARN")
 	set(&cfg.Listen, "MOOSE_LISTEN")
 	set(&cfg.DevIdentity, "MOOSE_DEV_IDENTITY")
+	if cfg.Drive != nil {
+		set(&cfg.Drive.GDriveKeyFile, "MOOSE_GDRIVE_KEY_FILE")
+		set(&cfg.Drive.GDriveKeySecretARN, "MOOSE_GDRIVE_KEY_SECRET_ARN")
+	}
 	if v := getenv("MOOSE_DYNAMO_TABLE"); v != "" {
 		cfg.Store.DynamoTable = v
 	}
 }
 
-// Validate checks consistency and prod safety rules.
+// Validate checks the common settings and the production safety rules.
+// Per-server sections are checked by ValidateDrive, ValidateEmail and
+// ValidateApprover.
 func (c Config) Validate() error {
 	var errs []error
 	switch c.Env {
@@ -160,16 +199,6 @@ func (c Config) Validate() error {
 	default:
 		errs = append(errs, fmt.Errorf("store.kind %q is not sqlite or dynamo", c.Store.Kind))
 	}
-	for _, p := range c.Redaction.Patterns {
-		if _, err := regexp.Compile(p); err != nil {
-			errs = append(errs, fmt.Errorf("redaction pattern %q: %v", p, err))
-		}
-	}
-	for id, cc := range c.Connectors {
-		if cc.MaxDocumentBytes < 0 {
-			errs = append(errs, fmt.Errorf("connectors.%s.max_document_bytes must not be negative", id))
-		}
-	}
 	for _, tag := range c.Identity.AllowedTags {
 		if !core.IsTag(tag) {
 			errs = append(errs, fmt.Errorf("identity.allowed_tags entry %q must start with tag:", tag))
@@ -189,8 +218,64 @@ func (c Config) Validate() error {
 			errs = append(errs, errors.New("MOOSE_DEV_IDENTITY is refused when env is prod"))
 		}
 	}
-	if len(errs) > 0 {
-		return fmt.Errorf("config: %w", errors.Join(errs...))
+	return joinErrs(errs)
+}
+
+// ValidateDrive checks the drive: section, which moose-drive requires.
+func (c Config) ValidateDrive() error {
+	d := c.Drive
+	if d == nil {
+		return errors.New("config: the drive: section is required by the Drive server")
 	}
-	return nil
+	var errs []error
+	for _, p := range d.Redaction.Patterns {
+		if _, err := regexp.Compile(p); err != nil {
+			errs = append(errs, fmt.Errorf("drive.redaction pattern %q: %v", p, err))
+		}
+	}
+	for id, cc := range d.Connectors {
+		if cc.MaxDocumentBytes < 0 {
+			errs = append(errs, fmt.Errorf("drive.connectors.%s.max_document_bytes must not be negative", id))
+		}
+	}
+	return joinErrs(errs)
+}
+
+// ValidateEmail checks the email: section, which moose-email requires.
+func (c Config) ValidateEmail() error {
+	e := c.Email
+	if e == nil {
+		return errors.New("config: the email: section is required by the email server")
+	}
+	var errs []error
+	if e.Provider != ProviderGmail {
+		errs = append(errs, fmt.Errorf("email.provider %q is not %s", e.Provider, ProviderGmail))
+	}
+	return joinErrs(errs)
+}
+
+// ValidateApprover checks the approver: section, which moose-approver requires.
+func (c Config) ValidateApprover() error {
+	a := c.Approver
+	if a == nil {
+		return errors.New("config: the approver: section is required by the approver server")
+	}
+	var errs []error
+	if a.RPID == "" {
+		errs = append(errs, errors.New("approver.rp_id is required"))
+	}
+	switch {
+	case a.Origin == "":
+		errs = append(errs, errors.New("approver.origin is required"))
+	case c.Env == EnvProd && !strings.HasPrefix(a.Origin, "https://"):
+		errs = append(errs, fmt.Errorf("approver.origin %q must start with https:// when env is prod", a.Origin))
+	}
+	return joinErrs(errs)
+}
+
+func joinErrs(errs []error) error {
+	if len(errs) == 0 {
+		return nil
+	}
+	return fmt.Errorf("config: %w", errors.Join(errs...))
 }

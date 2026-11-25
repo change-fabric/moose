@@ -23,7 +23,7 @@ func TestDefaultsValid(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Env != EnvDev || cfg.Store.Kind != StoreSQLite || !cfg.Connectors["gdrive"].Enabled {
+	if cfg.Env != EnvDev || cfg.Store.Kind != StoreSQLite || cfg.Drive != nil || cfg.Email != nil || cfg.Approver != nil {
 		t.Fatalf("unexpected defaults: %+v", cfg)
 	}
 }
@@ -35,12 +35,13 @@ tailnet: example.ts.net
 identity:
   mode: tsnet
   allowed_tags: [tag:moose-client]
-connectors:
-  gdrive:
-    enabled: true
-    max_document_bytes: 1024
-redaction:
-  patterns: ["AKIA[0-9A-Z]{16}"]
+drive:
+  connectors:
+    gdrive:
+      enabled: true
+      max_document_bytes: 1024
+  redaction:
+    patterns: ["AKIA[0-9A-Z]{16}"]
 store:
   kind: dynamo
   dynamo_table: from-file
@@ -53,7 +54,7 @@ store:
 		t.Fatal(err)
 	}
 	if cfg.Env != EnvProd || cfg.Store.DynamoTable != "from-env" || cfg.BootstrapAdmin != "me@example.com" ||
-		cfg.Connectors["gdrive"].MaxDocumentBytes != 1024 || cfg.Tailnet != "example.ts.net" {
+		cfg.Drive.Connectors["gdrive"].MaxDocumentBytes != 1024 || cfg.Tailnet != "example.ts.net" {
 		t.Fatalf("overrides not applied: %+v", cfg)
 	}
 }
@@ -95,7 +96,6 @@ func TestValidationErrors(t *testing.T) {
 	cases := map[string]string{
 		"bad env":       "env: staging\n",
 		"bad mode":      "identity: {mode: magic}\n",
-		"bad regex":     "redaction: {patterns: ['(']}\n",
 		"bad store":     "store: {kind: postgres}\n",
 		"dynamo no tbl": "store: {kind: dynamo}\n",
 		"unknown key":   "access_rules: []\n",
@@ -114,5 +114,132 @@ func TestValidationErrors(t *testing.T) {
 func TestMissingFile(t *testing.T) {
 	if _, err := Load(env(map[string]string{"MOOSE_CONFIG": "/nonexistent/moose.yaml"})); err == nil {
 		t.Fatal("want error")
+	}
+}
+
+func load(t *testing.T, body string, extra map[string]string) Config {
+	t.Helper()
+	e := map[string]string{"MOOSE_CONFIG": writeYAML(t, body)}
+	for k, v := range extra {
+		e[k] = v
+	}
+	cfg, err := Load(env(e))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return cfg
+}
+
+func wantErr(t *testing.T, err error, want string) {
+	t.Helper()
+	if err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("want error containing %q, got %v", want, err)
+	}
+}
+
+func TestMissingServerSections(t *testing.T) {
+	// A file with only common settings loads, then each server refuses to start.
+	cfg := load(t, "env: dev\n", nil)
+	wantErr(t, cfg.ValidateDrive(), "drive: section is required")
+	wantErr(t, cfg.ValidateEmail(), "email: section is required")
+	wantErr(t, cfg.ValidateApprover(), "approver: section is required")
+}
+
+func TestSectionsAreValidatedPerServer(t *testing.T) {
+	// A bad email section does not stop the Drive server, and vice versa.
+	cfg := load(t, `
+drive:
+  connectors:
+    gdrive: {enabled: true}
+email:
+  provider: outlook
+`, nil)
+	if err := cfg.ValidateDrive(); err != nil {
+		t.Fatalf("drive should be valid: %v", err)
+	}
+	wantErr(t, cfg.ValidateEmail(), "email.provider")
+	wantErr(t, cfg.ValidateApprover(), "approver: section is required")
+}
+
+func TestValidateDrive(t *testing.T) {
+	cases := map[string]struct{ yaml, want string }{
+		"bad regex": {"drive: {redaction: {patterns: ['(']}}\n", "drive.redaction pattern"},
+		"negative":  {"drive: {connectors: {gdrive: {max_document_bytes: -1}}}\n", "drive.connectors.gdrive.max_document_bytes"},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			wantErr(t, load(t, tc.yaml, nil).ValidateDrive(), tc.want)
+		})
+	}
+}
+
+func TestDriveEnvOnlySettings(t *testing.T) {
+	cfg := load(t, "drive: {}\n", map[string]string{"MOOSE_GDRIVE_KEY_FILE": "/k.json", "MOOSE_GDRIVE_KEY_SECRET_ARN": "arn:x"})
+	if cfg.Drive.GDriveKeyFile != "/k.json" || cfg.Drive.GDriveKeySecretARN != "arn:x" {
+		t.Fatalf("env settings not applied: %+v", cfg.Drive)
+	}
+	// Without a drive: section the Drive env settings have nowhere to go.
+	if cfg := load(t, "env: dev\n", map[string]string{"MOOSE_GDRIVE_KEY_FILE": "/k.json"}); cfg.Drive != nil {
+		t.Fatalf("drive section appeared from env alone: %+v", cfg.Drive)
+	}
+}
+
+func TestValidateEmail(t *testing.T) {
+	cfg := load(t, "email: {provider: gmail}\n", nil)
+	if err := cfg.ValidateEmail(); err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Email.Send.Live {
+		t.Fatal("send.live must default to false")
+	}
+	wantErr(t, load(t, "email: {}\n", nil).ValidateEmail(), "email.provider")
+}
+
+func TestValidateApprover(t *testing.T) {
+	ok := load(t, "approver: {rp_id: moose.example.org, origin: 'https://moose.example.org'}\n", nil)
+	if err := ok.ValidateApprover(); err != nil {
+		t.Fatal(err)
+	}
+	wantErr(t, load(t, "approver: {}\n", nil).ValidateApprover(), "approver.rp_id")
+	wantErr(t, load(t, "approver: {rp_id: x}\n", nil).ValidateApprover(), "approver.origin")
+	wantErr(t, load(t, "env: prod\napprover: {rp_id: x, origin: 'http://x'}\n", nil).ValidateApprover(), "https://")
+	if err := load(t, "approver: {rp_id: localhost, origin: 'http://localhost:8080'}\n", nil).ValidateApprover(); err != nil {
+		t.Fatalf("http origin is fine in dev: %v", err)
+	}
+}
+
+func TestOldTopLevelDriveKeysRejected(t *testing.T) {
+	for _, body := range []string{"connectors: {gdrive: {enabled: true}}\n", "redaction: {patterns: []}\n"} {
+		if _, err := Load(env(map[string]string{"MOOSE_CONFIG": writeYAML(t, body)})); err == nil {
+			t.Fatalf("pre-split key accepted: %s", body)
+		}
+	}
+}
+
+func TestShippedConfigsLoad(t *testing.T) {
+	cases := map[string]struct {
+		path string
+		env  map[string]string
+	}{
+		"example": {"../../moose.example.yaml", nil},
+		"lambda":  {"../../deploy/lambda/moose.yaml", map[string]string{"MOOSE_DYNAMO_TABLE": "t"}},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			e := map[string]string{"MOOSE_CONFIG": tc.path}
+			for k, v := range tc.env {
+				e[k] = v
+			}
+			cfg, err := Load(env(e))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := cfg.ValidateDrive(); err != nil {
+				t.Fatal(err)
+			}
+			if !cfg.Drive.Connectors["gdrive"].Enabled {
+				t.Fatalf("gdrive not enabled: %+v", cfg.Drive)
+			}
+		})
 	}
 }

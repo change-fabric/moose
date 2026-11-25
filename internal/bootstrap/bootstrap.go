@@ -1,6 +1,6 @@
-// Package bootstrap turns the process environment into ready-to-serve
-// dependencies: config, state store, connectors, core service, and the
-// authenticator. moosed and the Lambda entrypoint share it.
+// Package bootstrap turns the process environment into the dependencies every
+// server shares: config, state store, and the authenticator. Server-specific
+// wiring (for Drive, internal/drive/wiring) is built on the Runtime by each cmd.
 package bootstrap
 
 import (
@@ -8,17 +8,12 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"net/http"
 	"os"
 	"path/filepath"
 	"time"
 
 	"github.com/change-fabric/moose/internal/auth"
 	"github.com/change-fabric/moose/internal/config"
-	"github.com/change-fabric/moose/internal/drive/api"
-	"github.com/change-fabric/moose/internal/drive/connectors/gdrive"
-	"github.com/change-fabric/moose/internal/drive/core"
-	"github.com/change-fabric/moose/internal/server"
 	"github.com/change-fabric/moose/internal/store"
 	"github.com/change-fabric/moose/internal/store/dynamo"
 	"github.com/change-fabric/moose/internal/store/sqlite"
@@ -26,11 +21,12 @@ import (
 
 // Runtime is the assembled dependency set.
 type Runtime struct {
-	Config  config.Config
-	Store   store.Store
-	Service *core.Service
-	Auth    *auth.Authenticator
-	Logger  *slog.Logger
+	Config config.Config
+	Store  store.Store
+	Auth   *auth.Authenticator
+	Logger *slog.Logger
+	// Secret resolves a secret ARN, or is nil when the entrypoint has none.
+	Secret func(ctx context.Context, arn string) ([]byte, error)
 }
 
 // Options tune FromEnv.
@@ -46,6 +42,9 @@ type Options struct {
 	// Secret resolves a secret ARN to its value. The Lambda entrypoint
 	// supplies a Secrets Manager reader; without it ARN-based settings fail.
 	Secret func(ctx context.Context, arn string) ([]byte, error)
+	// Validate checks the calling server's own config section, for example
+	// config.Config.ValidateDrive. It runs before anything is opened.
+	Validate func(config.Config) error
 }
 
 // FromEnv loads config and builds the runtime. The caller closes Runtime.Store.
@@ -60,7 +59,12 @@ func FromEnv(ctx context.Context, opts Options) (*Runtime, error) {
 	if err != nil {
 		return nil, err
 	}
-	rt := &Runtime{Config: cfg, Logger: opts.Logger}
+	if opts.Validate != nil {
+		if err := opts.Validate(cfg); err != nil {
+			return nil, err
+		}
+	}
+	rt := &Runtime{Config: cfg, Logger: opts.Logger, Secret: opts.Secret}
 
 	if rt.Store, err = openStore(ctx, cfg, opts.DynamoClient); err != nil {
 		return nil, err
@@ -71,14 +75,6 @@ func FromEnv(ctx context.Context, opts Options) (*Runtime, error) {
 	}
 	if err := auth.EnsureBootstrapAdmin(ctx, rt.Store, cfg.BootstrapAdmin, time.Now()); err != nil {
 		return fail(fmt.Errorf("bootstrap admin: %w", err))
-	}
-
-	conns, maxBytes, err := connectors(ctx, cfg, opts.Logger, opts.Secret)
-	if err != nil {
-		return fail(err)
-	}
-	if rt.Service, err = core.NewService(conns, core.Options{RedactPatterns: cfg.Redaction.Patterns, MaxBytes: maxBytes}); err != nil {
-		return fail(err)
 	}
 
 	idSrc := opts.Identity
@@ -97,12 +93,6 @@ func FromEnv(ctx context.Context, opts Options) (*Runtime, error) {
 	return rt, nil
 }
 
-// Handler builds the composed http.Handler for this runtime.
-func (rt *Runtime) Handler(version string) http.Handler {
-	return server.New(server.Deps{Store: rt.Store, Auth: rt.Auth, Logger: rt.Logger,
-		Mounts: api.Mounts(api.Deps{Service: rt.Service, Store: rt.Store, Version: version})})
-}
-
 func openStore(ctx context.Context, cfg config.Config, ddb dynamo.API) (store.Store, error) {
 	switch cfg.Store.Kind {
 	case config.StoreSQLite:
@@ -119,35 +109,6 @@ func openStore(ctx context.Context, cfg config.Config, ddb dynamo.API) (store.St
 		return dynamo.New(ddb, cfg.Store.DynamoTable), nil
 	}
 	return nil, fmt.Errorf("store: unknown kind %q", cfg.Store.Kind)
-}
-
-func connectors(ctx context.Context, cfg config.Config, log *slog.Logger, secret func(context.Context, string) ([]byte, error)) ([]core.Connector, int64, error) {
-	gc, ok := cfg.Connectors[gdrive.ID]
-	if !ok || !gc.Enabled {
-		return nil, 0, nil
-	}
-	var key []byte
-	var keyErr error
-	switch {
-	case cfg.GDriveKeyFile != "":
-		key, keyErr = os.ReadFile(cfg.GDriveKeyFile)
-	case cfg.GDriveKeySecretARN != "" && secret != nil:
-		key, keyErr = secret(ctx, cfg.GDriveKeySecretARN)
-	case cfg.GDriveKeySecretARN != "":
-		keyErr = errors.New("MOOSE_GDRIVE_KEY_SECRET_ARN is read by the Lambda entrypoint only")
-	default:
-		keyErr = errors.New("no service account key configured (set MOOSE_GDRIVE_KEY_FILE)")
-	}
-	if keyErr == nil {
-		c, err := gdrive.New(ctx, key)
-		if err == nil {
-			return []core.Connector{c}, gc.MaxDocumentBytes, nil
-		}
-		keyErr = err
-	}
-	// Plan failure mode: start anyway, report gdrive unhealthy, answer 503.
-	log.Warn("gdrive connector unavailable", "err", keyErr)
-	return []core.Connector{Unavailable{IDValue: gdrive.ID, NameValue: "Google Drive", Err: keyErr}}, gc.MaxDocumentBytes, nil
 }
 
 func identity(ctx context.Context, cfg config.Config, secret func(context.Context, string) ([]byte, error)) (auth.IdentitySource, error) {
@@ -170,28 +131,4 @@ func identity(ctx context.Context, cfg config.Config, secret func(context.Contex
 		return nil, errors.New("identity.mode relay-headers needs the relay secret from the Lambda entrypoint")
 	}
 	return nil, fmt.Errorf("identity.mode %q is not supported here", cfg.Identity.Mode)
-}
-
-// Unavailable stands in for a connector whose credentials could not be
-// loaded: health reports the reason and every data call is a 503.
-type Unavailable struct {
-	IDValue, NameValue string
-	Err                error
-}
-
-func (u Unavailable) ID() string   { return u.IDValue }
-func (u Unavailable) Name() string { return u.NameValue }
-func (u Unavailable) Kind() string { return u.IDValue }
-func (u Unavailable) Detail(context.Context) string {
-	return "unavailable: " + u.Err.Error()
-}
-func (u Unavailable) Health(context.Context) error { return core.ErrUpstreamUnavailable }
-func (u Unavailable) List(context.Context, string, int) (core.SearchResult, error) {
-	return core.SearchResult{}, core.ErrUpstreamUnavailable
-}
-func (u Unavailable) Search(context.Context, core.SearchQuery) (core.SearchResult, error) {
-	return core.SearchResult{}, core.ErrUpstreamUnavailable
-}
-func (u Unavailable) Get(context.Context, string, int64) (core.Document, error) {
-	return core.Document{}, core.ErrUpstreamUnavailable
 }
