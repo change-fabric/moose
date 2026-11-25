@@ -60,7 +60,7 @@ variable "sweeper_zip_path" {
 }
 
 variable "alarm_emails" {
-  description = "Addresses subscribed to the moose alerts topic (attachment sweeper alarms). Null means the same addresses as budget_emails. Each must confirm the SNS subscription once."
+  description = "Addresses subscribed to the moose alerts topic (function, API, table and attachment sweeper alarms). Null means the same addresses as budget_emails. Each must confirm the SNS subscription once."
   type        = list(string)
   default     = null
 }
