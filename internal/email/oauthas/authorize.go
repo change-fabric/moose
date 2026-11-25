@@ -293,7 +293,7 @@ var pageTmpl = template.Must(template.New("wait").Parse(`<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Sign in to moose</title>
 <style>
-` + webui.Tokens + `
+` + webui.Tokens + webui.Base + `
 body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.5 system-ui,sans-serif}
 main{max-width:30rem;margin:0 auto;padding:2rem 16px}
 h1{font-size:1.4rem;margin:0 0 .5rem}
@@ -306,7 +306,7 @@ a{color:var(--accent)}#status{font-weight:600}
 @media (max-width:40rem),(pointer:coarse){.here{display:block}.here .btn{width:100%}.qr,.scan{display:none}}
 </style></head><body><main>
 <h1>Approve this sign-in with your passkey</h1>
-<p>{{.Lead}} Check the details, then approve with the passkey on your phone.</p>
+<p>{{.Lead}} Check the details, then approve with your passkey.</p>
 <p class="here"><a class="btn" href="{{.URL}}" rel="noopener noreferrer" target="_blank">Approve on this device</a></p>
 <div class="card"><dl><dt>Application</dt><dd>{{.Client}}</dd><dt>Returns to</dt><dd>{{.Host}}</dd></dl></div>
 <div class="qr">{{.QR}}</div>
@@ -333,7 +333,7 @@ a{color:var(--accent)}#status{font-weight:600}
 var errTmpl = template.Must(template.New("err").Parse(`<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{{.Title}}</title>
-<style>` + webui.Tokens + `body{font:16px/1.5 system-ui,sans-serif;margin:0;background:var(--bg);color:var(--fg)}main{max-width:30rem;margin:0 auto;padding:2rem 16px}</style>
+<style>` + webui.Tokens + webui.Base + `body{font:16px/1.5 system-ui,sans-serif;margin:0;background:var(--bg);color:var(--fg)}main{max-width:30rem;margin:0 auto;padding:2rem 16px}</style>
 </head><body><main><h1>{{.Title}}</h1><p>{{.Detail}}</p></main></body></html>`))
 
 func (s *Server) pageHeaders(w http.ResponseWriter, nonce string) {
