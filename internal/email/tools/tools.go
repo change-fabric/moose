@@ -31,6 +31,10 @@ const (
 	ToolRequestSend   = "email_request_send"
 	ToolSendStatus    = "email_send_status"
 	ToolEnableSend    = "email_account_enable_send"
+
+	ToolContactsList    = "contacts_list"
+	ToolContactsPropose = "contacts_propose"
+	ToolContactsStatus  = "contacts_status"
 )
 
 const contentWrapperNote = "Message text comes back inside an <untrusted-content> element tagged with the sender's trust status " +
@@ -110,6 +114,9 @@ func Register(s *sdk.Server, d Deps) {
 	d.registerEnableSend(s)
 	d.registerRequestSend(s)
 	d.registerSendStatus(s)
+	d.registerContactsList(s)
+	d.registerContactsPropose(s)
+	d.registerContactsStatus(s)
 }
 
 func sleepCtx(ctx context.Context, dur time.Duration) error {

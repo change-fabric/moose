@@ -1119,6 +1119,57 @@ func Run(t *testing.T, newStore func(t *testing.T) store.Store) {
 		}
 	})
 
+	t.Run("ApplyContactBatchIsAtomicAndOnce", func(t *testing.T) {
+		s := newStore(t)
+		must(t, s.PutContact(ctx, store.Contact{AccountID: "acc_1", Address: "a@x.com", Trust: store.TrustKnown, Tags: []string{"vendor"}}))
+		must(t, s.PutContact(ctx, store.Contact{AccountID: "acc_1", Address: "bad@x.com", Trust: store.TrustBlocked}))
+		row, err := s.ApplyContactBatch(ctx, store.ContactBatchRow{RequestID: "req1", Owner: "pat", AccountID: "acc_1", Created: now},
+			[]string{"B@x.com", "a@x.com", "a@x.com", "bad@x.com"})
+		must(t, err)
+		if len(row.Applied) != 2 || row.Applied[0] != "a@x.com" || row.Applied[1] != "b@x.com" || len(row.Skipped) != 1 || row.Skipped[0] != "bad@x.com" {
+			t.Fatalf("row = %+v", row)
+		}
+		a, _ := s.GetContact(ctx, "acc_1", "a@x.com")
+		if a.Trust != store.TrustTrusted || len(a.Tags) != 1 {
+			t.Fatalf("a = %+v: trust changes and tags are kept", a)
+		}
+		if b, err := s.GetContact(ctx, "acc_1", "b@x.com"); err != nil || b.Trust != store.TrustTrusted {
+			t.Fatalf("b = %+v, %v", b, err)
+		}
+		if bad, _ := s.GetContact(ctx, "acc_1", "bad@x.com"); bad.Trust != store.TrustBlocked {
+			t.Fatalf("a blocked contact was changed: %+v", bad)
+		}
+		got, err := s.GetContactBatch(ctx, "req1")
+		must(t, err)
+		if got.AccountID != "acc_1" || len(got.Applied) != 2 {
+			t.Fatalf("ledger = %+v", got)
+		}
+		// A second apply of the same request changes nothing.
+		must(t, s.PutContact(ctx, store.Contact{AccountID: "acc_1", Address: "a@x.com", Trust: store.TrustBlocked}))
+		if _, err := s.ApplyContactBatch(ctx, store.ContactBatchRow{RequestID: "req1", Owner: "pat", AccountID: "acc_1"}, []string{"a@x.com", "c@x.com"}); !errors.Is(err, store.ErrConflict) {
+			t.Fatalf("second apply err = %v, want ErrConflict", err)
+		}
+		if a, _ := s.GetContact(ctx, "acc_1", "a@x.com"); a.Trust != store.TrustBlocked {
+			t.Fatalf("a replay changed a contact: %+v", a)
+		}
+		if _, err := s.GetContact(ctx, "acc_1", "c@x.com"); !errors.Is(err, store.ErrNotFound) {
+			t.Fatal("a replay created a contact")
+		}
+		if _, err := s.GetContactBatch(ctx, "nope"); !errors.Is(err, store.ErrNotFound) {
+			t.Fatalf("missing ledger err = %v", err)
+		}
+		var many []string
+		for i := range store.MaxContactBatch + 1 {
+			many = append(many, fmt.Sprintf("u%d@x.com", i))
+		}
+		if _, err := s.ApplyContactBatch(ctx, store.ContactBatchRow{RequestID: "req2", Owner: "pat", AccountID: "acc_1"}, many); err == nil {
+			t.Fatal("an oversize batch was accepted")
+		}
+		if _, err := s.ApplyContactBatch(ctx, store.ContactBatchRow{RequestID: "req3", Owner: "pat", AccountID: "acc_1"}, nil); err == nil {
+			t.Fatal("an empty batch was accepted")
+		}
+	})
+
 	t.Run("AuditNewestFirstSinceAndTTL", func(t *testing.T) {
 		s := newStore(t)
 		base := time.Now().UTC().Add(-48 * time.Hour)

@@ -28,13 +28,14 @@ func (s *impl) Close() error { return s.b.Close() }
 // store set on their row.
 type ttlSetter interface{ setTTL(time.Time) }
 
-func (c *AuthCode) setTTL(t time.Time)     { c.TTL = t }
-func (c *Session) setTTL(t time.Time)      { c.TTL = t }
-func (c *ConnectState) setTTL(t time.Time) { c.TTL = t }
-func (c *AuthTxn) setTTL(t time.Time)      { c.TTL = t }
-func (a *Approval) setTTL(t time.Time)     { a.TTL = t }
-func (r *SendRow) setTTL(t time.Time)      { r.TTL = t }
-func (e *AuditEvent) setTTL(t time.Time)   { e.ExpiresAt = t }
+func (c *AuthCode) setTTL(t time.Time)        { c.TTL = t }
+func (c *Session) setTTL(t time.Time)         { c.TTL = t }
+func (c *ConnectState) setTTL(t time.Time)    { c.TTL = t }
+func (c *AuthTxn) setTTL(t time.Time)         { c.TTL = t }
+func (a *Approval) setTTL(t time.Time)        { a.TTL = t }
+func (r *SendRow) setTTL(t time.Time)         { r.TTL = t }
+func (r *ContactBatchRow) setTTL(t time.Time) { r.TTL = t }
+func (e *AuditEvent) setTTL(t time.Time)      { e.ExpiresAt = t }
 
 func decode[T any](it Item) (T, error) {
 	var v T
@@ -771,7 +772,25 @@ func (s *impl) PutContact(ctx context.Context, c Contact) error {
 	if c.Updated.IsZero() {
 		c.Updated = s.now().UTC()
 	}
-	return s.b.Transact(ctx, []Op{{Kind: OpPut, Item: Item{PK: capPK(c.AccountID), SK: contactSK(c.Address), Data: encode(c)}}})
+	// Every write moves the row's version, so a batch that read the contact
+	// earlier notices that it changed.
+	for range 10 {
+		pk, sk := capPK(c.AccountID), contactSK(c.Address)
+		it, ok, err := s.b.Get(ctx, pk, sk)
+		if err != nil {
+			return err
+		}
+		op := Op{Kind: OpPut, Cond: Cond{Kind: CondAbsent}, Item: Item{PK: pk, SK: sk, Data: encode(c), Ver: 1}}
+		if ok {
+			op.Cond, op.Item.Ver = Cond{Kind: CondVer, Ver: it.Ver}, it.Ver+1
+		}
+		err = s.b.Transact(ctx, []Op{op})
+		if _, lost := condIndex(err); lost {
+			continue
+		}
+		return err
+	}
+	return fmt.Errorf("%w: too much contention on contact %s", ErrConflict, c.Address)
 }
 
 func (s *impl) GetContact(ctx context.Context, accountID, address string) (Contact, error) {
@@ -799,6 +818,79 @@ func (s *impl) ListContacts(ctx context.Context, accountID string, f ContactFilt
 		out = append(out, c)
 	}
 	return out, nil
+}
+
+func cbatchPK(requestID string) string { return "CBATCH#" + requestID }
+
+func (s *impl) GetContactBatch(ctx context.Context, requestID string) (ContactBatchRow, error) {
+	r, _, err := load[ContactBatchRow](ctx, s.b, cbatchPK(requestID), "META")
+	return r, err
+}
+
+func (s *impl) ApplyContactBatch(ctx context.Context, row ContactBatchRow, addresses []string) (ContactBatchRow, error) {
+	if row.RequestID == "" || row.AccountID == "" {
+		return ContactBatchRow{}, errors.New("emailstore: contact batch needs request id and account id")
+	}
+	seen := map[string]bool{}
+	var addrs []string
+	for _, a := range addresses {
+		a = strings.ToLower(strings.TrimSpace(a))
+		if a != "" && !seen[a] {
+			seen[a] = true
+			addrs = append(addrs, a)
+		}
+	}
+	sort.Strings(addrs)
+	if len(addrs) == 0 || len(addrs) > MaxContactBatch {
+		return ContactBatchRow{}, fmt.Errorf("emailstore: a contact batch holds 1 to %d addresses", MaxContactBatch)
+	}
+	now := s.now().UTC()
+	if row.Created.IsZero() {
+		row.Created = now
+	}
+	// A contact changed between the read and the write fails that op's
+	// condition, and the whole transaction with it. Read again and retry.
+	for range 10 {
+		row.Applied, row.Skipped = nil, nil
+		ops := []Op{{}} // slot 0 is the claim, filled in once the lists are known
+		for _, addr := range addrs {
+			c, it, err := load[Contact](ctx, s.b, capPK(row.AccountID), contactSK(addr))
+			cond := Cond{Kind: CondVer, Ver: it.Ver}
+			switch {
+			case errors.Is(err, ErrNotFound):
+				c, it, cond = Contact{AccountID: row.AccountID, Address: addr}, Item{}, Cond{Kind: CondAbsent}
+			case err != nil:
+				return ContactBatchRow{}, err
+			}
+			if c.Trust == TrustBlocked {
+				// The blocked row is left as it is, but guarded: a concurrent
+				// change must not slip past the read.
+				row.Skipped = append(row.Skipped, addr)
+				ops = append(ops, Op{Kind: OpPut, Cond: cond, Item: it})
+				continue
+			}
+			c.Trust, c.Updated = TrustTrusted, now
+			next := it
+			next.PK, next.SK, next.Data, next.Ver = capPK(row.AccountID), contactSK(addr), encode(c), it.Ver+1
+			ops = append(ops, Op{Kind: OpPut, Cond: cond, Item: next})
+			row.Applied = append(row.Applied, addr)
+		}
+		ops[0] = Op{Kind: OpPut, Cond: Cond{Kind: CondAbsent}, Item: Item{
+			PK: cbatchPK(row.RequestID), SK: "META", Data: encode(row), TTL: secs(row.Created.Add(LedgerTTL))}}
+		err := s.b.Transact(ctx, ops)
+		if i, failed := condIndex(err); failed {
+			if i == 0 {
+				return ContactBatchRow{}, ErrConflict
+			}
+			continue
+		}
+		if err != nil {
+			return ContactBatchRow{}, err
+		}
+		row.TTL = secs(row.Created.Add(LedgerTTL))
+		return row, nil
+	}
+	return ContactBatchRow{}, fmt.Errorf("%w: too much contention on the contacts of %s", ErrConflict, row.AccountID)
 }
 
 func hasTag(tags []string, tag string) bool {
