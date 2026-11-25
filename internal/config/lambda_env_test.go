@@ -44,8 +44,10 @@ func TestEmailLambdaConfigAcceptsTheEnvironmentTerraformSets(t *testing.T) {
 	if err := cfg.ValidateEmail(); err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Email.Send.Live {
-		t.Fatal("email.send.live must ship false")
+	// Live sending was turned on deliberately after the end-to-end approval
+	// check; every send still needs a passkey receipt and fits the hourly cap.
+	if !cfg.Email.Send.Live {
+		t.Fatal("email.send.live is expected on in the shipped config")
 	}
 	if !cfg.Email.OAuthEnabled() {
 		t.Fatal("the OAuth server must be on for the public deployment")
