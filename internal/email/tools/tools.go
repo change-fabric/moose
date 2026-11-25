@@ -11,6 +11,7 @@ import (
 
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/change-fabric/moose/internal/email/attach"
 	"github.com/change-fabric/moose/internal/email/provider"
 	"github.com/change-fabric/moose/internal/email/store"
 )
@@ -22,6 +23,7 @@ const (
 	ToolSearch        = "email_search"
 	ToolGetMessage    = "email_get_message"
 	ToolGetThread     = "email_get_thread"
+	ToolGetAttachment = "email_get_attachment"
 	ToolAccountUpdate = "email_account_update"
 )
 
@@ -53,6 +55,9 @@ type Deps struct {
 	// Providers serves the read tools. Nil leaves them registered but failing
 	// with an internal error, which only happens in a misconfigured server.
 	Providers ProviderSource
+	// Attach fetches attachments (email_get_attachment). Nil leaves the tool
+	// registered but failing with an internal error.
+	Attach *attach.Service
 	// FallbackOwner names the owner when a request carries no bearer token. It
 	// is set only for local development without the OAuth server; with OAuth on,
 	// a request without a token never reaches a tool.
@@ -89,6 +94,7 @@ func Register(s *sdk.Server, d Deps) {
 	d.registerSearch(s)
 	d.registerGetMessage(s)
 	d.registerGetThread(s)
+	d.registerGetAttachment(s)
 }
 
 func sleepCtx(ctx context.Context, dur time.Duration) error {

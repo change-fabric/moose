@@ -387,18 +387,3 @@ func TestGetPDF(t *testing.T) {
 		t.Fatalf("junk: ct=%q snippet=%q", d.ContentType, d.Snippet)
 	}
 }
-
-func TestExtractPDFStopsAtBudget(t *testing.T) {
-	raw := []byte(minimalPDF("page one text", "page two text", "page three text"))
-	all, err := extractPDF(raw, 1<<20)
-	if err != nil || !strings.Contains(all, "page three") {
-		t.Fatalf("full extract: %q %v", all, err)
-	}
-	text, err := extractPDF(raw, 3)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(text, "page one") || strings.Contains(text, "page two") {
-		t.Fatalf("budget 3 should stop after page one, got %q", text)
-	}
-}

@@ -61,3 +61,12 @@ output "approver_env" {
     MOOSE_APPROVER_HMAC_SECRET_ARN = aws_secretsmanager_secret.service_hmac.arn
   }
 }
+
+output "attachments_bucket" {
+  description = "Private bucket email_get_attachment streams into (objects live about an hour)."
+  value       = aws_s3_bucket.attachments.bucket
+}
+
+output "sweeper_function_name" {
+  value = module.sweeper.function_name
+}

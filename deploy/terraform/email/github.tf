@@ -51,7 +51,7 @@ data "aws_iam_policy_document" "deploy" {
       "lambda:UpdateFunctionCode",
       "lambda:PublishVersion",
     ]
-    resources = [module.email.function_arn, module.approver.function_arn]
+    resources = [module.email.function_arn, module.approver.function_arn, module.sweeper.function_arn]
   }
 }
 

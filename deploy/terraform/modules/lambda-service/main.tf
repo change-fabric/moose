@@ -1,5 +1,6 @@
 # One Go Lambda (arm64, provided.al2023) with its role and log group. It creates
-# no API, domain, or DNS resources: the calling root owns ingress. It sets no
+# no API, domain, or DNS resources: the calling root owns ingress. A function that
+# only runs on a schedule sets allow_api = false and gets no invoke permission. It sets no
 # reserved concurrency because the account-wide quota is shared.
 
 data "aws_iam_policy_document" "assume" {
@@ -57,10 +58,20 @@ resource "aws_lambda_function" "this" {
     variables = var.environment
   }
 
+  # Async invocations that still fail after the retries land on this queue.
+  dynamic "dead_letter_config" {
+    for_each = var.dead_letter_enabled ? [1] : []
+    content {
+      target_arn = var.dead_letter_target_arn
+    }
+  }
+
   depends_on = [aws_iam_role_policy.logs, aws_iam_role_policy.extra, aws_cloudwatch_log_group.this]
 }
 
 resource "aws_lambda_permission" "api" {
+  count = var.allow_api ? 1 : 0
+
   statement_id  = "AllowApiInvoke"
   action        = "lambda:InvokeFunction"
   function_name = aws_lambda_function.this.function_name

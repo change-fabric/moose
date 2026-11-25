@@ -177,7 +177,7 @@ func TestListAccountsIsAnnotatedReadOnly(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	readOnly := map[string]bool{"email_list_accounts": true, "email_list_mailboxes": true, "email_search": true, "email_get_message": true, "email_get_thread": true, "email_account_update": false}
+	readOnly := map[string]bool{"email_list_accounts": true, "email_list_mailboxes": true, "email_search": true, "email_get_message": true, "email_get_thread": true, "email_get_attachment": true, "email_account_update": false}
 	if len(list.Tools) != len(readOnly) {
 		t.Fatalf("registered %d tools, want %d: %+v", len(list.Tools), len(readOnly), list.Tools)
 	}

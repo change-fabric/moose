@@ -20,8 +20,9 @@ variable "policy_json" {
 }
 
 variable "api_execution_arn" {
-  description = "Execution ARN of the API (REST or HTTP) allowed to invoke the function. The module creates the invoke permission only, never an API."
+  description = "Execution ARN of the API (REST or HTTP) allowed to invoke the function. The module creates the invoke permission only, never an API. Ignored when allow_api is false."
   type        = string
+  default     = ""
 }
 
 variable "memory_size" {
@@ -38,4 +39,22 @@ variable "timeout" {
 variable "log_retention_days" {
   type    = number
   default = 14
+}
+
+variable "allow_api" {
+  description = "Create the API Gateway invoke permission. A separate flag, not a test on api_execution_arn, because that ARN is unknown until the API exists and a count cannot depend on it."
+  type        = bool
+  default     = true
+}
+
+variable "dead_letter_enabled" {
+  description = "Attach dead_letter_target_arn as the function's dead-letter queue. A flag for the same reason as allow_api."
+  type        = bool
+  default     = false
+}
+
+variable "dead_letter_target_arn" {
+  description = "SQS queue or SNS topic ARN that receives async invocations that fail after their retries. The function role needs permission to send to it."
+  type        = string
+  default     = ""
 }

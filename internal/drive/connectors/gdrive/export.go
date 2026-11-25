@@ -1,25 +1,22 @@
 package gdrive
 
 import (
-	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"strings"
 
-	"github.com/ledongthuc/pdf"
 	"google.golang.org/api/drive/v3"
 
 	"github.com/change-fabric/moose/internal/drive/core"
+	"github.com/change-fabric/moose/internal/textextract"
 )
 
 const (
 	firstSheetNote = "first sheet only"
 	noPDFTextNote  = "no extractable text (scanned or image-only PDF)"
-	// The whole PDF must be in memory to parse its xref table, so the raw
-	// download gets its own cap, independent of the returned text cap.
-	maxPDFBytes = 32 << 20
 )
 
 // Get fetches metadata, then text content by mime type, capped at maxBytes.
@@ -97,52 +94,49 @@ func (c *Connector) fill(ctx context.Context, doc core.Document, ct string, maxB
 }
 
 func (c *Connector) pdfText(ctx context.Context, doc core.Document, maxBytes int64) (core.Document, error) {
-	raw, tooBig, err := c.read(ctx, c.download(ctx, doc.ID), maxPDFBytes)
+	ex := textextract.Default()
+	sp, err := c.spool(ctx, ex, c.download(ctx, doc.ID))
+	doc.ContentType = core.ContentTypeMetadataOnly
+	if errors.Is(err, textextract.ErrTooLarge) {
+		doc.Snippet = fmt.Sprintf("PDF larger than %d bytes; text not extracted", ex.Limits().MaxDownload)
+		return doc, nil
+	}
 	if err != nil {
 		return core.Document{}, err
 	}
-	doc.ContentType = core.ContentTypeMetadataOnly
-	if tooBig {
-		doc.Snippet = fmt.Sprintf("PDF larger than %d bytes; text not extracted", maxPDFBytes)
-		return doc, nil
-	}
-	text, err := extractPDF(raw, maxBytes)
-	if err != nil || strings.TrimSpace(text) == "" {
+	defer sp.Close()
+	res, err := ex.Extract(ctx, sp, textextract.Hint{MIME: "application/pdf"}, maxBytes)
+	if err != nil || strings.TrimSpace(res.Text) == "" {
 		doc.Snippet = noPDFTextNote
 		return doc, nil
 	}
-	if int64(len(text)) > maxBytes {
-		text = text[:maxBytes]
-		doc.Truncated = true
-	}
-	doc.Content = text
+	doc.Content = res.Text
+	doc.Truncated = res.Truncated
 	doc.ContentType = core.ContentTypePlain
 	return doc, nil
 }
 
-// extractPDF walks pages itself instead of calling Reader.GetPlainText, which
-// buffers every page before returning, and stops once more than maxBytes of
-// text is collected, so memory stays near maxBytes plus one page.
-// It recovers from panics because the parser panics on some malformed files.
-func extractPDF(raw []byte, maxBytes int64) (text string, err error) {
-	defer func() {
-		if r := recover(); r != nil {
-			err = fmt.Errorf("parse pdf: %v", r)
-		}
-	}()
-	r, err := pdf.NewReader(bytes.NewReader(raw), int64(len(raw)))
+// spool streams a download into a temporary file under the extractor's size
+// cap, so a PDF is never held whole in memory.
+func (c *Connector) spool(ctx context.Context, ex *textextract.Extractor, open opener) (*textextract.Spooled, error) {
+	var resp *http.Response
+	err := c.retry(ctx, func() error {
+		var err error
+		resp, err = open()
+		return err
+	})
 	if err != nil {
-		return "", err
+		return nil, mapErr(err)
 	}
-	var sb strings.Builder
-	for i := 1; i <= r.NumPage() && int64(sb.Len()) <= maxBytes; i++ {
-		t, err := r.Page(i).GetPlainText(nil)
-		if err != nil {
-			return "", err
-		}
-		sb.WriteString(t)
+	defer resp.Body.Close()
+	sp, err := ex.Spool(resp.Body)
+	if errors.Is(err, textextract.ErrTooLarge) {
+		return nil, err
 	}
-	return sb.String(), nil
+	if err != nil {
+		return nil, fmt.Errorf("%w: read body: %v", ErrUpstreamUnavailable, err)
+	}
+	return sp, nil
 }
 
 // read returns at most limit bytes and whether the body was longer.

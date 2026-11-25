@@ -11,18 +11,19 @@ LDFLAGS := -s -w -X main.version=$(VERSION)
 LDFLAGS_DRIVE := -s -w -X main.version=$(VERSION_DRIVE)
 LDFLAGS_EMAIL := -s -w -X main.version=$(VERSION_EMAIL)
 # Server binaries get their own version; everything else under cmd/ uses LDFLAGS.
-SERVER_CMDS := moose-drive moose-drive-lambda moose-email moose-email-lambda moose-approver
+SERVER_CMDS := moose-drive moose-drive-lambda moose-email moose-email-lambda moose-approver moose-attach-sweeper
 OTHER_CMDS := $(filter-out $(addprefix cmd/,$(SERVER_CMDS)),$(wildcard cmd/*))
 GOLANGCI_IMAGE ?= golangci/golangci-lint:v2.15.0
 ALLOWED_LICENSES := MIT,BSD-2-Clause,BSD-3-Clause,Apache-2.0,ISC,MPL-2.0
 
-.PHONY: build test vet lint license-check test-store clean link-secrets up down logs ps lambda-drive lambda-email lambda-approver approver-enroll a11y-approver relay-proxy tf-validate tf-plan e2e
+.PHONY: build test vet lint license-check test-store clean link-secrets up down logs ps lambda-drive lambda-email lambda-approver lambda-sweeper approver-enroll a11y-approver relay-proxy tf-validate tf-plan e2e
 
 build:
 	CGO_ENABLED=0 $(GO) build -trimpath -ldflags "$(LDFLAGS)" -o dist/ $(addprefix ./,$(OTHER_CMDS))
 	CGO_ENABLED=0 $(GO) build -trimpath -ldflags "$(LDFLAGS_DRIVE)" -o dist/ ./cmd/moose-drive ./cmd/moose-drive-lambda
 	@if [ -d cmd/moose-email ]; then CGO_ENABLED=0 $(GO) build -trimpath -ldflags "$(LDFLAGS_EMAIL)" -o dist/ ./cmd/moose-email; fi
 	@if [ -d cmd/moose-approver ]; then CGO_ENABLED=0 $(GO) build -trimpath -ldflags "$(LDFLAGS_EMAIL)" -o dist/ ./cmd/moose-approver; fi
+	@if [ -d cmd/moose-attach-sweeper ]; then CGO_ENABLED=0 $(GO) build -trimpath -ldflags "$(LDFLAGS_EMAIL)" -o dist/ ./cmd/moose-attach-sweeper; fi
 
 test:
 	$(GO) test ./...
@@ -99,6 +100,13 @@ lambda-approver:
 	cp deploy/lambda/moose-approver.yaml dist/lambda-approver/moose.yaml
 	rm -f dist/moose-approver.zip
 	cd dist/lambda-approver && zip -q -X ../moose-approver.zip bootstrap moose.yaml
+
+# The attachment sweeper is a bare binary: no config file, it reads MOOSE_EMAIL_ATTACH_BUCKET.
+lambda-sweeper:
+	mkdir -p dist/lambda-sweeper
+	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 $(GO) build -trimpath -tags lambda.norpc -ldflags "$(LDFLAGS_EMAIL)" -o dist/lambda-sweeper/bootstrap ./cmd/moose-attach-sweeper
+	rm -f dist/moose-attach-sweeper.zip
+	cd dist/lambda-sweeper && zip -q -X ../moose-attach-sweeper.zip bootstrap
 
 # Prints the single-use passkey enrollment link for a deployed moose-approver (needs the
 # email root applied and dist/moose-approver from `make build`).
