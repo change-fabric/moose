@@ -293,6 +293,27 @@ type Contact struct {
 	Updated   time.Time `json:"updated"`
 }
 
+// MaxContactBatch is the most addresses one contact-trust-batch may hold. The
+// local claim and every contact change share one transaction, and DynamoDB
+// allows 100 writes in one.
+const MaxContactBatch = 50
+
+// ContactBatchRow is the local ledger entry for one applied contact-trust-batch
+// request. Its presence means the request's changes were applied: the row is
+// written in the same transaction as the changes.
+type ContactBatchRow struct {
+	RequestID string `json:"request_id"`
+	Owner     string `json:"owner"`
+	AccountID string `json:"account_id"`
+	// Applied lists the addresses now trusted.
+	Applied []string `json:"applied"`
+	// Skipped lists approved addresses that were left alone because they are
+	// blocked: a block set after the request was made still wins.
+	Skipped []string  `json:"skipped,omitempty"`
+	Created time.Time `json:"created"`
+	TTL     time.Time `json:"-"`
+}
+
 // ContactFilter narrows ListContacts. Empty fields match everything.
 type ContactFilter struct {
 	Trust string
@@ -465,6 +486,13 @@ type Contacts interface {
 	PutContact(ctx context.Context, c Contact) error
 	GetContact(ctx context.Context, accountID, address string) (Contact, error) // ErrNotFound means "new"
 	ListContacts(ctx context.Context, accountID string, f ContactFilter) ([]Contact, error)
+	// ApplyContactBatch promotes addresses to trusted and records row, in one
+	// atomic write: either the claim and every change land, or nothing does.
+	// Addresses that are blocked are skipped and listed in the row. It returns
+	// ErrConflict, changing nothing, when row.RequestID was already applied.
+	ApplyContactBatch(ctx context.Context, row ContactBatchRow, addresses []string) (ContactBatchRow, error)
+	// GetContactBatch returns the ledger row of an applied batch, or ErrNotFound.
+	GetContactBatch(ctx context.Context, requestID string) (ContactBatchRow, error)
 }
 
 // DraftMeta is what moose remembers about a draft it created: the thread the

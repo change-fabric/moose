@@ -946,7 +946,7 @@ func TestInstructionsAndDescriptionsSnapshot(t *testing.T) {
 	for _, tl := range list.Tools {
 		byName[tl.Name] = tl
 	}
-	for _, name := range []string{"email_list_accounts", "email_list_mailboxes", "email_search", "email_get_message", "email_get_thread", "email_get_attachment", "email_account_update", "email_create_draft", "email_update_draft", "email_account_enable_send", "email_request_send", "email_send_status"} {
+	for _, name := range []string{"email_list_accounts", "email_list_mailboxes", "email_search", "email_get_message", "email_get_thread", "email_get_attachment", "email_account_update", "email_create_draft", "email_update_draft", "email_account_enable_send", "email_request_send", "email_send_status", "contacts_list", "contacts_propose", "contacts_status"} {
 		tl := byName[name]
 		if tl == nil {
 			t.Fatalf("tool %s missing", name)

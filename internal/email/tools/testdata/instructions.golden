@@ -36,3 +36,12 @@ Ask the owner to approve sending a draft. moose snapshots the draft's exact byte
 
 TOOL email_send_status readOnly=false
 Check a send request and, once the owner has approved it, carry it out. Call it again until it reaches a final state: sent, failed, unknown (it is not known whether the message left; check the Sent folder, it is never retried), would_send (approved, but live sending is switched off), denied or expired. pending means the approval is still waiting; blocked, rate_limited and already_claimed explain why nothing was sent yet. The message sent is the exact snapshot the owner approved, never the draft as it is now, and it is sent at most once. The source draft stays in the mailbox after a send. Pass a batch's request_id to carry out every message in it. Restate from_address exactly. Default for replies is the receiving account.
+
+TOOL contacts_list readOnly=true
+List the contacts each account has: an address is new (not seen before), known (the account has written to it or read mail from it), trusted (the owner approved it) or blocked. Contacts belong to one account, so the same address can be trusted in one and new in another. Filter by trust (new, known, trusted, blocked) and by tag. Omit account to cover every account. Results are capped by limit (default 100, at most 500).
+
+TOOL contacts_propose readOnly=false
+Change how one account treats some addresses. block marks an address blocked (mail from it is flagged and no draft to it can be sent) and tag adds tags (such as "vendor"); both apply at once. trust asks the owner to trust addresses: every trust change in the call goes into ONE approval request, and you get its approval_url for the owner's phone. After they approve, call contacts_status with the request_id to apply it. A blocked address is never trusted by a request; block always wins. Contacts belong to one account, so name it. Pass `changes` for several addresses, or address, action and tags for one.
+
+TOOL contacts_status readOnly=false
+Check a trust request from contacts_propose and, once the owner has approved it, apply it. Every approved change lands together or none does. Returns pending (still waiting for the passkey), applied (the addresses are now trusted), denied or expired. Calling it again after applied changes nothing.
