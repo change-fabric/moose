@@ -33,6 +33,19 @@ jobs:
       - name: License check
         run: make license-check
 
+  a11y:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      GO: go
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Approver pages (axe-core in browserless Chromium)
+        run: make a11y-approver
+
   terraform:
     runs-on: ubuntu-latest
     timeout-minutes: 10

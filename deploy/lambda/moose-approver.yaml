@@ -1,0 +1,18 @@
+# Config bundled into the moose-approver Lambda zip by `make lambda-approver` (read via
+# MOOSE_CONFIG=/var/task/moose.yaml). The table name and keys come from the environment
+# Terraform sets, because they are per tenant.
+env: prod
+hostname: moose-approver
+store:
+  kind: dynamo
+  dynamo_table: ""           # MOOSE_DYNAMO_TABLE (the moose-approver table, not moose-email)
+approver:
+  # Set by Terraform in the Lambda environment, not here:
+  #   MOOSE_APPROVER_RP_ID              the domain passkeys are scoped to (moose.changefabric.org)
+  #   MOOSE_APPROVER_ORIGIN             https://<rp id>
+  #   MOOSE_APPROVER_OWNER              the tenant owner whose passkeys approve requests
+  #   MOOSE_APPROVER_SIGNING_KEY_ID     asymmetric ECC_NIST_P256 SIGN_VERIFY KMS key (kms:Sign for this role only)
+  #   MOOSE_APPROVER_KMS_KEY_ID         symmetric KMS key that seals previews
+  #   MOOSE_APPROVER_HMAC_SECRET_ARN    Secrets Manager secret shared with moose-email
+  rp_id: ""
+  origin: ""
