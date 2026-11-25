@@ -28,6 +28,12 @@ type Provider struct {
 	seq         int
 	// Err, when set, is returned by every call. Tests use it to simulate outages.
 	Err error
+	// SendErr, when set, is returned by SendDraft only (and nothing is delivered).
+	SendErr error
+	// SendHook, when set, runs inside SendDraft after the message is recorded
+	// and before it returns, so tests can fail the caller after the provider
+	// accepted the message.
+	SendHook func()
 	// Delay makes read calls wait this long (or until the context ends), to
 	// simulate a slow account.
 	Delay time.Duration
@@ -312,17 +318,57 @@ func (p *Provider) GetDraftRaw(_ context.Context, id string) ([]byte, error) {
 	if !ok {
 		return nil, fmt.Errorf("%w: draft %s", provider.ErrNotFound, id)
 	}
+	if len(d.raw) > provider.MaxDraftRaw {
+		return nil, fmt.Errorf("%w: draft %s", provider.ErrDraftTooLarge, id)
+	}
 	return append([]byte(nil), d.raw...), nil
 }
 
 func (p *Provider) SendDraft(_ context.Context, raw []byte, threadID string) (provider.SentMessage, error) {
 	p.mu.Lock()
-	defer p.mu.Unlock()
 	if p.Err != nil {
+		defer p.mu.Unlock()
 		return provider.SentMessage{}, p.Err
+	}
+	if p.SendErr != nil {
+		defer p.mu.Unlock()
+		return provider.SentMessage{}, p.SendErr
 	}
 	p.seq++
 	res := provider.SentMessage{MessageID: "s" + strconv.Itoa(p.seq), ThreadID: threadID}
 	p.sent = append(p.sent, Sent{Raw: append([]byte(nil), raw...), ThreadID: threadID, Result: res})
+	hook := p.SendHook
+	p.mu.Unlock()
+	if hook != nil {
+		hook()
+	}
 	return res, nil
+}
+
+// DraftCount reports how many drafts exist.
+func (p *Provider) DraftCount() int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return len(p.drafts)
+}
+
+// Draft returns a draft's record (including its thread) and its raw bytes.
+func (p *Provider) Draft(id string) (provider.Draft, []byte, bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	d, ok := p.drafts[id]
+	if !ok {
+		return provider.Draft{}, nil, false
+	}
+	return d.Draft, append([]byte(nil), d.raw...), true
+}
+
+// SetDraftRaw replaces a draft's bytes without going through UpdateDraft, which
+// is how a test edits a draft behind moose's back (the owner editing in Gmail).
+func (p *Provider) SetDraftRaw(id string, raw []byte) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if d, ok := p.drafts[id]; ok {
+		d.raw = append([]byte(nil), raw...)
+	}
 }

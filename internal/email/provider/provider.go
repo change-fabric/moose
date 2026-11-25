@@ -24,7 +24,16 @@ var (
 	ErrRateLimited = errors.New("provider: rate limited")
 	// ErrTooLarge means an attachment is over MaxAttachment and was not downloaded.
 	ErrTooLarge = errors.New("provider: attachment too large")
+	// ErrDraftTooLarge means a draft is over MaxDraftRaw and was not downloaded.
+	ErrDraftTooLarge = errors.New("provider: draft too large")
+	// ErrRejected means the provider definitely refused the request (an HTTP 4xx
+	// that is not an auth, not-found or rate-limit answer), so nothing was done.
+	ErrRejected = errors.New("provider: request rejected")
 )
+
+// MaxDraftRaw is the largest draft, as raw RFC822 bytes, a provider reads for an
+// approval snapshot. A larger draft fails before any approval request exists.
+const MaxDraftRaw = 256 << 10
 
 // MaxAttachment is the largest attachment a provider downloads. It matches the
 // text extractor's download cap, and it bounds the memory a provider that must
@@ -109,7 +118,11 @@ type Message struct {
 	Subject   string    `json:"subject"`
 	Date      time.Time `json:"date"`
 	Snippet   string    `json:"snippet,omitempty"`
-	BodyText  string    `json:"body_text,omitempty"`
+	// RFCMessageID and References are the Message-ID and References headers,
+	// used to thread a reply.
+	RFCMessageID string `json:"rfc_message_id,omitempty"`
+	References   string `json:"references,omitempty"`
+	BodyText     string `json:"body_text,omitempty"`
 	// BodyHTML is the HTML alternative, raw. Tools convert it to text when
 	// BodyText is empty; it is never returned to the caller as HTML.
 	BodyHTML    string           `json:"body_html,omitempty"`
@@ -161,7 +174,8 @@ type Provider interface {
 	OpenAttachment(ctx context.Context, messageID, attachmentID string) (io.ReadCloser, AttachmentMeta, error)
 	CreateDraft(ctx context.Context, in DraftInput) (Draft, error)
 	UpdateDraft(ctx context.Context, id string, in DraftInput) (Draft, error)
-	// GetDraftRaw returns the draft's RFC822 bytes.
+	// GetDraftRaw returns the draft's RFC822 bytes. A draft over MaxDraftRaw
+	// fails with ErrDraftTooLarge without its content being read.
 	GetDraftRaw(ctx context.Context, id string) ([]byte, error)
 	// SendDraft delivers exactly raw. It never re-reads a draft, so an approved
 	// snapshot is what goes out.

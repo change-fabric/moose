@@ -191,6 +191,15 @@ func (c *Client) UpdateDraft(ctx context.Context, id string, in provider.DraftIn
 }
 
 func (c *Client) GetDraftRaw(ctx context.Context, id string) ([]byte, error) {
+	// A metadata read carries the size without the content, so an oversized
+	// draft is refused before its bytes are downloaded.
+	meta, err := c.svc.Users.Drafts.Get(userMe, id).Format("minimal").Context(ctx).Do()
+	if err != nil {
+		return nil, mapErr(err)
+	}
+	if meta.Message != nil && meta.Message.SizeEstimate > provider.MaxDraftRaw {
+		return nil, fmt.Errorf("%w: draft %s is about %d bytes", provider.ErrDraftTooLarge, id, meta.Message.SizeEstimate)
+	}
 	d, err := c.svc.Users.Drafts.Get(userMe, id).Format("raw").Context(ctx).Do()
 	if err != nil {
 		return nil, mapErr(err)
@@ -198,7 +207,17 @@ func (c *Client) GetDraftRaw(ctx context.Context, id string) ([]byte, error) {
 	if d.Message == nil {
 		return nil, fmt.Errorf("%w: draft %s has no message", provider.ErrNotFound, id)
 	}
-	return decode(d.Message.Raw)
+	if len(d.Message.Raw) > base64.RawURLEncoding.EncodedLen(provider.MaxDraftRaw)+4 {
+		return nil, fmt.Errorf("%w: draft %s", provider.ErrDraftTooLarge, id)
+	}
+	raw, err := decode(d.Message.Raw)
+	if err != nil {
+		return nil, fmt.Errorf("gmail: draft data: %w", err)
+	}
+	if len(raw) > provider.MaxDraftRaw {
+		return nil, fmt.Errorf("%w: draft %s", provider.ErrDraftTooLarge, id)
+	}
+	return raw, nil
 }
 
 func (c *Client) SendDraft(ctx context.Context, raw []byte, threadID string) (provider.SentMessage, error) {
@@ -250,6 +269,10 @@ func convert(m *gmail.Message) provider.Message {
 				out.Cc = parseAddrs(h.Value)
 			case "subject":
 				out.Subject = h.Value
+			case "message-id":
+				out.RFCMessageID = strings.TrimSpace(h.Value)
+			case "references":
+				out.References = strings.TrimSpace(h.Value)
 			case "date":
 				if t, err := mail.ParseDate(h.Value); err == nil {
 					out.Date = t.UTC()
@@ -330,6 +353,9 @@ func mapErr(err error) error {
 					return fmt.Errorf("%w: %v", provider.ErrRateLimited, err)
 				}
 			}
+		}
+		if ge.Code >= 400 && ge.Code < 500 {
+			return fmt.Errorf("%w: HTTP %s: %v", provider.ErrRejected, strconv.Itoa(ge.Code), err)
 		}
 		return fmt.Errorf("gmail: HTTP %s: %w", strconv.Itoa(ge.Code), err)
 	}

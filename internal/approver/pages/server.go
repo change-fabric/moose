@@ -165,6 +165,7 @@ func softFlagText(f api.SoftFlag) string {
 	label := map[string]string{
 		"new_recipient": "New recipient", "external_domain": "External domain",
 		"bcc": "Bcc recipient", "many_recipients": "More than 10 recipients",
+		"reply_account_differs": "Reply from a different account than the one that received the message",
 	}[f.Flag]
 	if label == "" {
 		label = f.Flag

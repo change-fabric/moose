@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/change-fabric/moose/internal/email/store"
@@ -47,9 +48,7 @@ func RequestSendEnable(ctx context.Context, st store.Store, ap Approver, a store
 		IdempotencyKey: key,
 		Kind:           store.KindAccountSendEnable,
 		Payload:        payload,
-		Preview: map[string]string{
-			"action": "Enable sending", "nickname": a.Nickname, "from_address": a.Address, "account_id": a.ID,
-		},
+		Preview:        sendEnablePreview(ctx, st, a),
 	})
 	if err != nil {
 		return ApprovalResponse{}, err
@@ -66,6 +65,45 @@ func RequestSendEnable(ctx context.Context, st store.Store, ap Approver, a store
 		return ApprovalResponse{}, err
 	}
 	return resp, nil
+}
+
+// sendEnablePreview is the banner the approver shows for the request. The
+// siblings let it warn about look-alike accounts; they travel as JSON because
+// the preview is a flat string map.
+func sendEnablePreview(ctx context.Context, st store.Store, a store.Account) map[string]string {
+	nick := a.Nickname
+	if nick == "" {
+		nick = a.Address
+	}
+	pv := map[string]string{
+		"action": "Enable sending", "nickname": nick, "from_address": a.Address, "account_id": a.ID,
+		"display_name": a.DisplayName, "color_index": strconv.Itoa(a.ColorIndex), "account_status": a.Status,
+	}
+	type sibling struct {
+		AccountID   string `json:"account_id"`
+		Nickname    string `json:"nickname"`
+		Address     string `json:"address"`
+		DisplayName string `json:"display_name,omitempty"`
+	}
+	var sibs []sibling
+	if accts, err := st.ListAccounts(ctx, a.Owner); err == nil {
+		for _, o := range accts {
+			if o.ID == a.ID {
+				continue
+			}
+			n := o.Nickname
+			if n == "" {
+				n = o.Address
+			}
+			sibs = append(sibs, sibling{o.ID, n, o.Address, o.DisplayName})
+		}
+	}
+	if len(sibs) > 0 {
+		if b, err := json.Marshal(sibs); err == nil {
+			pv["siblings"] = string(b)
+		}
+	}
+	return pv
 }
 
 // isDuplicate reports a request id the store already holds, which happens when

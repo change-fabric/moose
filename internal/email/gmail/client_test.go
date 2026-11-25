@@ -269,3 +269,72 @@ func TestSearchCapsMetadataFetchesPerCall(t *testing.T) {
 		t.Fatalf("fetched %d", fetched)
 	}
 }
+
+// A draft whose size estimate is over the limit is refused from the metadata
+// read alone: its content is never downloaded.
+func TestGetDraftRawRefusesAnOversizedDraftWithoutDownloadingIt(t *testing.T) {
+	var rawFetches int
+	c := newClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Query().Get("format") {
+		case "minimal":
+			writeJSON(w, map[string]any{"id": "d1", "message": map[string]any{"id": "m", "sizeEstimate": provider.MaxDraftRaw + 1}})
+		default:
+			rawFetches++
+			writeJSON(w, map[string]any{"id": "d1", "message": map[string]any{"raw": b64("x")}})
+		}
+	}))
+	if _, err := c.GetDraftRaw(context.Background(), "d1"); !errors.Is(err, provider.ErrDraftTooLarge) {
+		t.Fatalf("err = %v, want ErrDraftTooLarge", err)
+	}
+	if rawFetches != 0 {
+		t.Fatalf("the raw content was fetched %d times for an oversized draft", rawFetches)
+	}
+}
+
+// A draft that lies about its size is still caught after decoding.
+func TestGetDraftRawChecksTheDecodedSizeToo(t *testing.T) {
+	big := strings.Repeat("y", provider.MaxDraftRaw+1)
+	c := newClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("format") == "minimal" {
+			writeJSON(w, map[string]any{"id": "d1", "message": map[string]any{"sizeEstimate": 10}})
+			return
+		}
+		writeJSON(w, map[string]any{"id": "d1", "message": map[string]any{"raw": b64(big)}})
+	}))
+	if _, err := c.GetDraftRaw(context.Background(), "d1"); !errors.Is(err, provider.ErrDraftTooLarge) {
+		t.Fatalf("err = %v, want ErrDraftTooLarge", err)
+	}
+}
+
+// Definite client errors on send are ErrRejected, so the send engine can tell
+// "not accepted" from a timeout or a server error, which is unknown.
+func TestSendClassifiesDefiniteAndAmbiguousFailures(t *testing.T) {
+	for status, wantRejected := range map[int]bool{400: false, 403: true, 413: true, 422: true, 500: false, 503: false} {
+		c := newClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(status)
+			_, _ = w.Write([]byte(`{"error":{"code":` + strconv.Itoa(status) + `,"message":"x"}}`))
+		}))
+		_, err := c.SendDraft(context.Background(), []byte("From: a@b.c\r\n\r\nx"), "")
+		if got := errors.Is(err, provider.ErrRejected); got != wantRejected {
+			t.Errorf("status %d: ErrRejected = %v, want %v (err %v)", status, got, wantRejected, err)
+		}
+		if status >= 500 && (errors.Is(err, provider.ErrRejected) || errors.Is(err, provider.ErrAuth) || errors.Is(err, provider.ErrNotFound)) {
+			t.Errorf("status %d must stay ambiguous: %v", status, err)
+		}
+	}
+}
+
+func TestGetMessageReadsThreadingHeaders(t *testing.T) {
+	c := newClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, map[string]any{"id": "m1", "threadId": "t1", "payload": map[string]any{
+			"mimeType": "text/plain", "body": map[string]any{"data": b64("hi")},
+			"headers": []map[string]string{
+				{"name": "From", "value": "a@b.c"}, {"name": "Message-ID", "value": " <abc@mail.example> "}, {"name": "References", "value": "<r1@x> <r2@x>"},
+			}}})
+	}))
+	m, err := c.GetMessage(context.Background(), "m1")
+	if err != nil || m.RFCMessageID != "<abc@mail.example>" || m.References != "<r1@x> <r2@x>" {
+		t.Fatalf("message = %+v, %v", m, err)
+	}
+}

@@ -225,7 +225,9 @@ type Approval struct {
 	DraftID        string `json:"draft_id,omitempty"`
 	RFC822SHA256   string `json:"rfc822_sha256,omitempty"`
 	// Snapshot is the envelope-sealed approved RFC822 (send requests only).
-	Snapshot []byte    `json:"snapshot,omitempty"`
+	Snapshot []byte `json:"snapshot,omitempty"`
+	// ThreadID is the provider thread the approved message is sent into.
+	ThreadID string    `json:"thread_id,omitempty"`
 	Status   string    `json:"status"`
 	Created  time.Time `json:"created"`
 	Expires  time.Time `json:"expires"`
@@ -325,6 +327,8 @@ type Store interface {
 	SendLedger
 	HourlyCap
 	Contacts
+	DraftMetas
+	Settings
 	Audit
 	Close() error
 }
@@ -420,10 +424,16 @@ type Approvals interface {
 	// exists it returns the stored request and created=false.
 	CreateApproval(ctx context.Context, a Approval, now time.Time) (got Approval, created bool, err error)
 	GetApproval(ctx context.Context, id string) (Approval, error)
+	// FindApprovalByKey returns the approval created under an idempotency key,
+	// or ErrNotFound.
+	FindApprovalByKey(ctx context.Context, key string) (Approval, error)
 	// TransitionApproval moves the status to `to` if it is currently one of
 	// `from` (ErrInvalidTransition otherwise). clearSnapshot drops the sealed
 	// RFC822 in the same write.
 	TransitionApproval(ctx context.Context, id string, from []string, to string, clearSnapshot bool) (Approval, error)
+	// FindApprovals returns the approvals of one kind for one account, newest
+	// first. It reads a secondary index, which may lag a moment on DynamoDB.
+	FindApprovals(ctx context.Context, kind, accountID string) ([]Approval, error)
 }
 
 // SendLedger is the durable double-send guard.
@@ -455,6 +465,44 @@ type Contacts interface {
 	PutContact(ctx context.Context, c Contact) error
 	GetContact(ctx context.Context, accountID, address string) (Contact, error) // ErrNotFound means "new"
 	ListContacts(ctx context.Context, accountID string, f ContactFilter) ([]Contact, error)
+}
+
+// DraftMeta is what moose remembers about a draft it created: the thread the
+// message belongs to and, for a reply, which account received the original.
+// Gmail's raw draft carries neither in a form moose can rely on.
+type DraftMeta struct {
+	AccountID string `json:"account_id"`
+	DraftID   string `json:"draft_id"`
+	ThreadID  string `json:"thread_id,omitempty"`
+	// ReplyAccountID is the account that received the message being replied
+	// to. It is empty when the draft is not a reply.
+	ReplyAccountID string    `json:"reply_account_id,omitempty"`
+	Updated        time.Time `json:"updated"`
+}
+
+// DraftMetaTTL is how long a draft's notes are kept.
+const DraftMetaTTL = 30 * 24 * time.Hour
+
+// DraftMetas holds notes about drafts, keyed PK ACCT#<id>, SK DRAFT#<draft id>.
+type DraftMetas interface {
+	PutDraftMeta(ctx context.Context, m DraftMeta) error
+	GetDraftMeta(ctx context.Context, accountID, draftID string) (DraftMeta, error) // ErrNotFound if none
+}
+
+// KillState is the send kill switch.
+type KillState struct {
+	On     bool      `json:"on"`
+	Reason string    `json:"reason,omitempty"`
+	At     time.Time `json:"at"`
+}
+
+// Settings holds deployment-wide switches that can change while the server runs.
+type Settings interface {
+	// SetKillSwitch turns the send kill switch on or off. While it is on, no
+	// request dispatches a send; requests and reads are unaffected.
+	SetKillSwitch(ctx context.Context, on bool, reason string, now time.Time) error
+	// KillSwitch reads the switch. An unset switch is off.
+	KillSwitch(ctx context.Context) (KillState, error)
 }
 
 // Audit holds metadata-only audit rows with a 90-day ttl.

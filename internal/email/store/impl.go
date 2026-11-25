@@ -550,7 +550,7 @@ func (s *impl) CreateApproval(ctx context.Context, a Approval, now time.Time) (A
 	}
 	ttl := secs(now.Add(ApprovalTTL))
 	err := s.b.Transact(ctx, []Op{
-		{Kind: OpPut, Cond: Cond{Kind: CondAbsent}, Item: Item{PK: approvalPK(a.ID), SK: "META", Data: encode(a), TTL: ttl}},
+		{Kind: OpPut, Cond: Cond{Kind: CondAbsent}, Item: Item{PK: approvalPK(a.ID), SK: "META", G1: approvalIndex(a.Kind, a.AccountID), Data: encode(a), TTL: ttl}},
 		{Kind: OpPut, Cond: Cond{Kind: CondAbsent}, Item: Item{PK: idemPK(a.IdempotencyKey), SK: "META", Data: encode(pointer{a.ID}), TTL: ttl}},
 	})
 	if i, failed := condIndex(err); failed {
@@ -569,6 +569,46 @@ func (s *impl) CreateApproval(ctx context.Context, a Approval, now time.Time) (A
 	}
 	a.TTL = ttl
 	return a, true, nil
+}
+
+// approvalIndex is the secondary-index key that finds an account's approvals of
+// one kind. Approvals without an account are not indexed.
+func approvalIndex(kind, accountID string) string {
+	if accountID == "" {
+		return ""
+	}
+	return "APPRACCT#" + accountID + "#" + kind
+}
+
+func (s *impl) FindApprovals(ctx context.Context, kind, accountID string) ([]Approval, error) {
+	if accountID == "" {
+		return nil, nil
+	}
+	items, err := s.b.QueryIndex(ctx, approvalIndex(kind, accountID))
+	if err != nil {
+		return nil, err
+	}
+	out := make([]Approval, 0, len(items))
+	for _, it := range items {
+		if !strings.HasPrefix(it.PK, "APPR#") || it.SK != "META" {
+			continue
+		}
+		a, err := decode[Approval](it)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, a)
+	}
+	sort.SliceStable(out, func(i, j int) bool { return out[i].Created.After(out[j].Created) })
+	return out, nil
+}
+
+func (s *impl) FindApprovalByKey(ctx context.Context, key string) (Approval, error) {
+	p, _, err := load[pointer](ctx, s.b, idemPK(key), "META")
+	if err != nil {
+		return Approval{}, err
+	}
+	return s.GetApproval(ctx, p.AccountID)
 }
 
 func (s *impl) GetApproval(ctx context.Context, id string) (Approval, error) {
@@ -821,4 +861,44 @@ func (s *impl) ListAudit(ctx context.Context, owner string, since time.Time, lim
 		}
 	}
 	return out, nil
+}
+
+// ---- draft notes ----
+
+func draftSK(draftID string) string { return "DRAFT#" + draftID }
+
+func (s *impl) PutDraftMeta(ctx context.Context, m DraftMeta) error {
+	if m.AccountID == "" || m.DraftID == "" {
+		return errors.New("emailstore: draft meta needs account id and draft id")
+	}
+	if m.Updated.IsZero() {
+		m.Updated = s.now().UTC()
+	}
+	return s.b.Transact(ctx, []Op{{Kind: OpPut, Item: Item{
+		PK: capPK(m.AccountID), SK: draftSK(m.DraftID), Data: encode(m), TTL: secs(m.Updated.Add(DraftMetaTTL))}}})
+}
+
+func (s *impl) GetDraftMeta(ctx context.Context, accountID, draftID string) (DraftMeta, error) {
+	m, _, err := load[DraftMeta](ctx, s.b, capPK(accountID), draftSK(draftID))
+	return m, err
+}
+
+// ---- settings ----
+
+const (
+	settingsPK = "SETTINGS"
+	killSK     = "KILL"
+)
+
+func (s *impl) SetKillSwitch(ctx context.Context, on bool, reason string, now time.Time) error {
+	st := KillState{On: on, Reason: reason, At: now.UTC()}
+	return s.b.Transact(ctx, []Op{{Kind: OpPut, Item: Item{PK: settingsPK, SK: killSK, Data: encode(st)}}})
+}
+
+func (s *impl) KillSwitch(ctx context.Context) (KillState, error) {
+	st, _, err := load[KillState](ctx, s.b, settingsPK, killSK)
+	if errors.Is(err, ErrNotFound) {
+		return KillState{}, nil
+	}
+	return st, err
 }
