@@ -20,6 +20,7 @@ import (
 	"github.com/awslabs/aws-lambda-go-api-proxy/httpadapter"
 
 	"github.com/change-fabric/moose/internal/config"
+	"github.com/change-fabric/moose/internal/email/connect"
 	"github.com/change-fabric/moose/internal/mcpkit"
 )
 
@@ -53,7 +54,16 @@ func run(log *slog.Logger) error {
 	if err := cfg.ValidateEmail(); err != nil {
 		return err
 	}
-	h := newHandler(version)
+	w, err := buildConnect(context.Background(), cfg, log, defaultAWS)
+	if err != nil {
+		return err
+	}
+	var mounts []mount
+	if w != nil {
+		defer w.store.Close()
+		mounts = append(mounts, mount{connect.Prefix, w.connect.Handler()})
+	}
+	h := newHandler(version, mounts...)
 	if os.Getenv("AWS_LAMBDA_RUNTIME_API") != "" {
 		lambda.Start(httpadapter.NewV2(h).ProxyWithContext)
 		return nil
@@ -64,15 +74,19 @@ func run(log *slog.Logger) error {
 	return serve(log, cfg.Listen, h)
 }
 
-// newHandler serves /healthz and the MCP endpoint. The MCP server has no tools
-// yet; they arrive with the provider-backed tool phases.
-func newHandler(version string) http.Handler {
+// newHandler serves /healthz, the MCP endpoint and any extra mounts (the Google
+// connect page). The MCP server has no tools yet; they arrive with the
+// provider-backed tool phases.
+func newHandler(version string, mounts ...mount) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"ok":true}`))
 	})
 	mux.Handle(mcpkit.Path, mcpkit.Handler(mcpkit.NewServer(serverName, version, nil)))
+	for _, m := range mounts {
+		mux.Handle(m.pattern, m.handler)
+	}
 	return mux
 }
 

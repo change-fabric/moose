@@ -10,3 +10,7 @@ email:
   provider: gmail
   send:
     live: false              # stays false until an end-to-end approval is verified
+  # Set by Terraform in the Lambda environment, not here, because they are per tenant:
+  #   MOOSE_EMAIL_BASE_URL            public origin; turns on /connect/google
+  #   MOOSE_EMAIL_KMS_KEY_ID          symmetric key that seals refresh tokens
+  #   MOOSE_GOOGLE_OAUTH_SECRET_ARN   Secrets Manager secret {client_id, client_secret}
