@@ -58,7 +58,7 @@ resource "aws_api_gateway_integration" "proxy" {
   http_method             = aws_api_gateway_method.proxy.http_method
   integration_http_method = "POST"
   type                    = "AWS_PROXY"
-  uri                     = aws_lambda_function.moose.invoke_arn
+  uri                     = module.lambda.invoke_arn
 }
 
 resource "aws_api_gateway_method" "root" {
@@ -74,7 +74,7 @@ resource "aws_api_gateway_integration" "root" {
   http_method             = aws_api_gateway_method.root.http_method
   integration_http_method = "POST"
   type                    = "AWS_PROXY"
-  uri                     = aws_lambda_function.moose.invoke_arn
+  uri                     = module.lambda.invoke_arn
 }
 
 resource "aws_api_gateway_deployment" "moose" {

@@ -39,7 +39,7 @@ variable "bootstrap_admin" {
 }
 
 variable "lambda_zip" {
-  description = "Path to the Lambda zip built by `make lambda`."
+  description = "Path to the Lambda zip built by `make lambda-drive`."
   type        = string
   default     = "../../../dist/moose-drive-lambda.zip"
 }
@@ -54,12 +54,6 @@ variable "relay_proxy_image" {
   description = "Container image the relay proxy binary runs in (static binary; needs CA certificates only)."
   type        = string
   default     = "gcr.io/distroless/static-debian12:latest"
-}
-
-variable "lambda_reserved_concurrency" {
-  description = "Reserved concurrency for the Lambda (cost guard)."
-  type        = number
-  default     = 5
 }
 
 variable "deletion_protection" {

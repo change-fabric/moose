@@ -23,7 +23,7 @@ output "dynamodb_table" {
 }
 
 output "lambda_function" {
-  value = aws_lambda_function.moose.function_name
+  value = module.lambda.function_name
 }
 
 output "relay_instance_id" {

@@ -60,9 +60,10 @@ logs:
 ps:
 	$(COMPOSE) ps
 
-# AWS deployment (Terraform root in deploy/terraform/aws).
+# AWS deployment (Terraform roots in deploy/terraform/drive and deploy/terraform/email).
 TF ?= terraform
-TF_DIR := deploy/terraform/aws
+TF_DIRS := deploy/terraform/drive deploy/terraform/email
+TF_PLAN_DIR ?= deploy/terraform/drive
 
 # The zip step runs on the host and bundles deploy/lambda/moose.yaml.
 lambda-drive:
@@ -77,11 +78,13 @@ relay-proxy:
 	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 $(GO) build -trimpath -ldflags "$(LDFLAGS)" -o dist/moose-relay-proxy ./cmd/moose-relay-proxy
 
 tf-validate:
-	$(TF) -chdir=$(TF_DIR) init -backend=false -input=false >/dev/null
-	$(TF) -chdir=$(TF_DIR) validate
+	@for d in $(TF_DIRS); do \
+	  echo "== $$d"; \
+	  $(TF) -chdir=$$d init -backend=false -input=false >/dev/null && $(TF) -chdir=$$d validate || exit 1; \
+	done
 
 tf-plan:
-	$(TF) -chdir=$(TF_DIR) plan -var-file=env/dev.tfvars
+	$(TF) -chdir=$(TF_PLAN_DIR) plan -var-file=env/dev.tfvars
 
 clean:
 	rm -rf dist
