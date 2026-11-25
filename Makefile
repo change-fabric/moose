@@ -1,15 +1,27 @@
 # Go is never installed on the host: $(GO) defaults to a wrapper that runs the
 # official golang image. CI overrides it with GO=go.
 GO ?= ./scripts/go
-VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+# Each server is tagged on its own line: drive/vX.Y.Z and email/vX.Y.Z. The tag prefix is
+# stripped, so tag drive/v0.2.0 builds as 0.2.0. Untagged builds fall back to the short sha.
+VERSION_DRIVE ?= $(shell git describe --tags --match 'drive/v*' --always --dirty 2>/dev/null | sed 's|^drive/v||' | grep . || echo dev)
+VERSION_EMAIL ?= $(shell git describe --tags --match 'email/v*' --always --dirty 2>/dev/null | sed 's|^email/v||' | grep . || echo dev)
+# Shared tools (the moose CLI, relay proxy) ride the drive version line.
+VERSION ?= $(VERSION_DRIVE)
 LDFLAGS := -s -w -X main.version=$(VERSION)
+LDFLAGS_DRIVE := -s -w -X main.version=$(VERSION_DRIVE)
+LDFLAGS_EMAIL := -s -w -X main.version=$(VERSION_EMAIL)
+# Server binaries get their own version; everything else under cmd/ uses LDFLAGS.
+SERVER_CMDS := moose-drive moose-drive-lambda moose-email moose-email-lambda
+OTHER_CMDS := $(filter-out $(addprefix cmd/,$(SERVER_CMDS)),$(wildcard cmd/*))
 GOLANGCI_IMAGE ?= golangci/golangci-lint:v2.15.0
 ALLOWED_LICENSES := MIT,BSD-2-Clause,BSD-3-Clause,Apache-2.0,ISC,MPL-2.0
 
 .PHONY: build test vet lint license-check test-store clean link-secrets up down logs ps lambda-drive relay-proxy tf-validate tf-plan e2e
 
 build:
-	CGO_ENABLED=0 $(GO) build -trimpath -ldflags "$(LDFLAGS)" -o dist/ ./cmd/...
+	CGO_ENABLED=0 $(GO) build -trimpath -ldflags "$(LDFLAGS)" -o dist/ $(addprefix ./,$(OTHER_CMDS))
+	CGO_ENABLED=0 $(GO) build -trimpath -ldflags "$(LDFLAGS_DRIVE)" -o dist/ ./cmd/moose-drive ./cmd/moose-drive-lambda
+	@if [ -d cmd/moose-email ]; then CGO_ENABLED=0 $(GO) build -trimpath -ldflags "$(LDFLAGS_EMAIL)" -o dist/ ./cmd/moose-email; fi
 
 test:
 	$(GO) test ./...
@@ -48,7 +60,7 @@ link-secrets:
 	done
 
 up:
-	$(COMPOSE) build --build-arg VERSION=$(VERSION)
+	$(COMPOSE) build --build-arg VERSION=$(VERSION_DRIVE)
 	$(COMPOSE) up -d
 
 down:
@@ -68,7 +80,7 @@ TF_PLAN_DIR ?= deploy/terraform/drive
 # The zip step runs on the host and bundles deploy/lambda/moose.yaml.
 lambda-drive:
 	mkdir -p dist/lambda
-	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 $(GO) build -trimpath -tags lambda.norpc -ldflags "$(LDFLAGS)" -o dist/lambda/bootstrap ./cmd/moose-drive-lambda
+	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 $(GO) build -trimpath -tags lambda.norpc -ldflags "$(LDFLAGS_DRIVE)" -o dist/lambda/bootstrap ./cmd/moose-drive-lambda
 	cp deploy/lambda/moose.yaml dist/lambda/moose.yaml
 	rm -f dist/moose-drive-lambda.zip
 	cd dist/lambda && zip -q -X ../moose-drive-lambda.zip bootstrap moose.yaml

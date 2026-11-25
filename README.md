@@ -159,6 +159,17 @@ MOOSE_E2E_QUERY=<term> MOOSE_E2E_DOC_ID=<shared file id> make e2e
 
 It checks health, auth (including the 401 challenge), sources, search, get, the not-found exit code, MCP `initialize` and `tools/list`, and the audit log.
 
+## Releases and versions
+
+Each server is versioned independently with a prefixed git tag: `drive/vX.Y.Z` for `moose-drive` and `moose-drive-lambda`, `email/vX.Y.Z` for `moose-email`. The Makefile derives `VERSION_DRIVE` and `VERSION_EMAIL` from `git describe --match 'drive/v*'` and `--match 'email/v*'` and strips the prefix, so the tag `drive/v0.2.0` builds as version `0.2.0` (`dist/moose-drive --version`). Untagged commits report the short sha, plus `-dirty` for a modified tree.
+
+```sh
+git tag drive/v0.2.0 && git push origin drive/v0.2.0
+git tag email/v0.1.0 && git push origin email/v0.1.0
+```
+
+CI checks out full history and tags so these versions resolve. Override a version with `make build VERSION_DRIVE=1.2.3`.
+
 ## License
 
 Moose is open source software released under the [MIT License](LICENSE).
