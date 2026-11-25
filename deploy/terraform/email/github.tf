@@ -28,6 +28,13 @@ data "aws_iam_policy_document" "github_trust" {
       variable = "token.actions.githubusercontent.com:repository_id"
       values   = [var.github_repository_id]
     }
+
+    # IAM requires a scoped sub claim on GitHub OIDC trust; only main may deploy.
+    condition {
+      test     = "StringEquals"
+      variable = "token.actions.githubusercontent.com:sub"
+      values   = ["repo:change-fabric/moose:ref:refs/heads/main"]
+    }
   }
 }
 
