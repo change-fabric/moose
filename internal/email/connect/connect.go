@@ -52,6 +52,8 @@ const SessionCookie = "moose_session"
 
 const (
 	csrfCookie    = "moose_csrf"
+	// LoginPath is the dashboard sign-in, served by the authorization server.
+	LoginPath = "/connect/login"
 	providerGmail = "gmail"
 )
 
@@ -167,7 +169,7 @@ func secure(next http.Handler) http.Handler {
 		h := w.Header()
 		h.Set("Cache-Control", "no-store")
 		h.Set("X-Content-Type-Options", "nosniff")
-		h.Set("Referrer-Policy", "no-referrer")
+		h.Set("Referrer-Policy", "same-origin")
 		h.Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'")
 		next.ServeHTTP(w, r)
 	})
@@ -176,7 +178,14 @@ func secure(next http.Handler) http.Handler {
 func (s *Server) owner(w http.ResponseWriter, r *http.Request) (string, bool) {
 	owner, ok := s.d.Auth.Owner(r)
 	if !ok || owner == "" {
-		s.fail(w, http.StatusUnauthorized, "Sign in first", "This page needs a dashboard session. Sign in through the approver, then open it again.")
+		// A plain page load goes straight to sign-in, which returns here once
+		// approved. A form post cannot be replayed, so it explains instead.
+		if r.Method == http.MethodGet {
+			http.Redirect(w, r, LoginPath, http.StatusSeeOther)
+			return "", false
+		}
+		s.failWith(w, http.StatusUnauthorized, "Your session ended",
+			"Sign in again with your passkey, then retry. Nothing was changed.", LoginPath, "Sign in")
 		return "", false
 	}
 	return owner, true
@@ -196,7 +205,10 @@ func (s *Server) ownerPost(w http.ResponseWriter, r *http.Request) (string, bool
 }
 
 func (s *Server) csrfOK(r *http.Request) bool {
+	// Referrer-Policy is same-origin, so a same-origin form post carries a real
+	// Origin; "null" (or any other value) is refused.
 	if o := r.Header.Get("Origin"); o != "" && o != s.origin {
+		s.d.Log.Warn("connect: csrf refused", "reason", "origin", "origin", o)
 		return false
 	}
 	if sf := r.Header.Get("Sec-Fetch-Site"); sf != "" && sf != "same-origin" && sf != "none" {
@@ -204,6 +216,7 @@ func (s *Server) csrfOK(r *http.Request) bool {
 	}
 	c, err := r.Cookie(csrfCookie)
 	if err != nil || c.Value == "" {
+		s.d.Log.Warn("connect: csrf refused", "reason", "no cookie")
 		return false
 	}
 	return subtle.ConstantTimeCompare([]byte(c.Value), []byte(r.PostFormValue("csrf"))) == 1
@@ -242,19 +255,6 @@ func (s *Server) start(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		st.ReconnectID = id
-	} else if nick := strings.TrimSpace(r.PostFormValue("nickname")); nick != "" {
-		display, slug, err := store.NormalizeNickname(nick)
-		if err != nil {
-			s.fail(w, http.StatusBadRequest, "Nickname not allowed", err.Error())
-			return
-		}
-		for _, a := range accts {
-			if _, s2, _ := store.NormalizeNickname(a.Nickname); s2 == slug {
-				s.fail(w, http.StatusConflict, "Nickname taken", fmt.Sprintf("%q is already the nickname of another account.", display))
-				return
-			}
-		}
-		st.Nickname = display
 	}
 	state := randomToken(32)
 	verifier := oauth2.GenerateVerifier()
@@ -516,9 +516,9 @@ func (s *Server) disconnect(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if strings.TrimSpace(r.PostFormValue("confirm")) != a.Nickname {
-		s.fail(w, http.StatusBadRequest, "Nickname did not match",
-			fmt.Sprintf("To disconnect %s, type its nickname exactly. Nothing was changed.", a.Nickname))
+	if !strings.EqualFold(strings.TrimSpace(r.PostFormValue("confirm")), a.Address) {
+		s.fail(w, http.StatusBadRequest, "Address did not match",
+			fmt.Sprintf("To disconnect %s, type its address exactly. Nothing was changed.", a.Address))
 		return
 	}
 	if err := s.d.Store.DisconnectAccount(r.Context(), owner, a.ID, s.d.Now()); err != nil {
@@ -542,7 +542,7 @@ func (s *Server) enableSend(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, PagePath, http.StatusSeeOther)
 		return
 	case a.Status != store.StatusOK:
-		s.fail(w, http.StatusConflict, "Account not ready", fmt.Sprintf("%s is %s. Reconnect it before enabling send.", a.Nickname, strings.ReplaceAll(a.Status, "_", " ")))
+		s.fail(w, http.StatusConflict, "Account not ready", fmt.Sprintf("%s is %s. Reconnect it before enabling send.", a.Address, strings.ReplaceAll(a.Status, "_", " ")))
 		return
 	case s.d.Approver == nil:
 		s.fail(w, http.StatusServiceUnavailable, "Approver not configured", "Enabling send needs a passkey approval and this deployment has no approver configured.")

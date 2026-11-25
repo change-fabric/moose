@@ -123,6 +123,17 @@ Terraform root in [`deploy/terraform/drive`](deploy/terraform/drive): a Go Lambd
 
 Idle cost is roughly $11-12 a month: the relay about $3, one-AZ interface endpoint about $7-8, secrets $0.80; Lambda, API Gateway, and DynamoDB are near zero at pre-alpha volume. The one-hour Tailscale auth key is stored in Terraform state, so keep the state bucket private.
 
+### moose-email on AWS (vertical slice)
+
+Terraform root in [`deploy/terraform/email`](deploy/terraform/email): one HTTP API on your own domain in front of two Lambdas (`moose-email` for `/mcp`, the OAuth server and the Google connect page; `moose-approver` for passkey approvals under `/approve`), two DynamoDB tables, three KMS keys (only the approver role can `kms:Sign`), Secrets Manager entries, the Route53 records, a GitHub deploy role that can only update function code, and a budget. Send is off: `email.send.live` is `false` and the only tool is `email_list_accounts`.
+
+1. Copy `backend.tf.example` to `backend.tf` and `env/prod.tfvars.example` to `env/prod.tfvars` (both gitignored) and fill them in. A second tenant sets its own `domain_name`, `route53_zone_id`, state bucket and Google OAuth client.
+2. `make build lambda-email lambda-approver`, then `terraform -chdir=deploy/terraform/email init`, `plan -var-file=env/prod.tfvars -out=tf.plan`, review, and `apply tf.plan`.
+3. Register `https://<domain>/connect/google/callback` on your Google OAuth client, then store the client with the `google_oauth_secret_put` output command. The Lambdas retry their start-up until the secret has a value.
+4. `make approver-enroll` prints a one-time link; open it on the phone that will hold your passkey.
+5. Open `https://<domain>/connect/login`, approve the sign-in with the passkey, and connect your Google account.
+6. Add the connector: `claude mcp add --transport http moose-email https://<domain>/mcp`, or the same URL in Claude.ai.
+
 ## Clients
 
 Every client needs a PAT (`moose token create --name <laptop>`) and must be on the tailnet. Export it as `MOOSE_PAT`.

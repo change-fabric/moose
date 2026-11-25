@@ -1,0 +1,9 @@
+# Copy to env/<env>.tfvars (gitignored), for example env/prod.tfvars.
+env                  = "prod"
+region               = "us-east-1"
+domain_name          = "moose.changefabric.org"
+route53_zone_id      = "Z08930502G3I2NZWQ3V7K"
+owner                = "patrick"
+github_repository_id = "1428537494" # gh api repos/change-fabric/moose --jq .id
+budget_emails        = ["you@example.com"]
+budget_limit_usd     = 25

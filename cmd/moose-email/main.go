@@ -18,10 +18,12 @@ import (
 
 	"github.com/aws/aws-lambda-go/lambda"
 	"github.com/awslabs/aws-lambda-go-api-proxy/httpadapter"
+	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/change-fabric/moose/internal/config"
 	"github.com/change-fabric/moose/internal/email/connect"
 	"github.com/change-fabric/moose/internal/email/oauthas"
+	"github.com/change-fabric/moose/internal/email/tools"
 	"github.com/change-fabric/moose/internal/mcpkit"
 )
 
@@ -60,8 +62,9 @@ func run(log *slog.Logger) error {
 		return err
 	}
 	var (
-		mounts  []mount
-		protect func(http.Handler) http.Handler
+		mounts   []mount
+		protect  func(http.Handler) http.Handler
+		register func(*sdk.Server)
 	)
 	if w != nil {
 		defer w.store.Close()
@@ -70,8 +73,9 @@ func run(log *slog.Logger) error {
 			mounts = append(mounts, oauthMounts(w.oauth)...)
 			protect = w.oauth.Protect
 		}
+		register = registerTools(w, cfg)
 	}
-	h := newHandlerAuth(version, protect, mounts...)
+	h := newHandlerAuth(version, protect, register, mounts...)
 	if os.Getenv("AWS_LAMBDA_RUNTIME_API") != "" {
 		lambda.Start(httpadapter.NewV2(h).ProxyWithContext)
 		return nil
@@ -82,13 +86,23 @@ func run(log *slog.Logger) error {
 	return serve(log, cfg.Listen, h)
 }
 
+// registerTools adds the email tools. Without the OAuth server (local
+// development) a request has no token, so the dev identity stands in as owner.
+func registerTools(w *wiring, cfg config.Config) func(*sdk.Server) {
+	d := tools.Deps{Store: w.store}
+	if w.oauth == nil && cfg.Env == config.EnvDev {
+		d.FallbackOwner = cfg.DevIdentity
+	}
+	return func(s *sdk.Server) { tools.Register(s, d) }
+}
+
 // oauthMounts routes the authorization server's paths to it. They match the
 // API Gateway route map: /.well-known/*, /register, /authorize, /authorize/poll
-// and /token.
+// and /token, plus the dashboard login under /connect/login.
 func oauthMounts(as *oauthas.Server) []mount {
 	h := as.Handler()
 	var ms []mount
-	for _, p := range []string{"/.well-known/", oauthas.RegisterPath, oauthas.AuthorizePath, oauthas.AuthorizePath + "/", oauthas.TokenPath} {
+	for _, p := range []string{"/.well-known/", oauthas.RegisterPath, oauthas.AuthorizePath, oauthas.AuthorizePath + "/", oauthas.TokenPath, oauthas.LoginPath, oauthas.LoginPollPath} {
 		ms = append(ms, mount{p, h})
 	}
 	return ms
@@ -98,23 +112,27 @@ func oauthMounts(as *oauthas.Server) []mount {
 // connect page), with /mcp open. It is the local development shape; a deployment
 // that runs the OAuth server goes through newHandlerAuth.
 func newHandler(version string, mounts ...mount) http.Handler {
-	return newHandlerAuth(version, nil, mounts...)
+	return newHandlerAuth(version, nil, nil, mounts...)
 }
 
 // newHandlerAuth is newHandler with protect wrapped around /mcp, which is
-// auth.RequireBearerToken when the OAuth server is configured. The MCP server
-// has no tools yet; they arrive with the provider-backed tool phases.
-func newHandlerAuth(version string, protect func(http.Handler) http.Handler, mounts ...mount) http.Handler {
+// auth.RequireBearerToken when the OAuth server is configured. register adds the
+// tools; it is nil for a bare MCP endpoint.
+func newHandlerAuth(version string, protect func(http.Handler) http.Handler, register func(*sdk.Server), mounts ...mount) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"ok":true}`))
 	})
-	var mcp http.Handler = mcpkit.Handler(mcpkit.NewServer(serverName, version, nil))
+	srv := mcpkit.NewServer(serverName, version, nil)
+	if register != nil {
+		register(srv)
+	}
+	var mcp http.Handler = mcpkit.Handler(srv)
 	if protect != nil {
 		mcp = protect(mcp)
 	}
-	mux.Handle(mcpkit.Path, mcp)
+	mux.Handle(oauthas.MCPPath, mcp)
 	for _, m := range mounts {
 		mux.Handle(m.pattern, m.handler)
 	}

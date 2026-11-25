@@ -15,9 +15,8 @@ variable "environment" {
 }
 
 variable "policy_json" {
-  description = "Extra IAM policy document (JSON) attached to the function role. Logs access is always granted by the module."
+  description = "IAM policy document (JSON) attached to the function role, beyond the log access the module always grants. Required, not optional: the attachment must not depend on a value only known after apply."
   type        = string
-  default     = null
 }
 
 variable "api_execution_arn" {

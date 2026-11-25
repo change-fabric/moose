@@ -59,8 +59,9 @@ const (
 	AuthorizePath  = "/authorize"
 	PollPath       = "/authorize/poll"
 	TokenPath      = "/token"
-	// MCPPath is the protected resource.
-	MCPPath = "/mcp"
+	// MCPPath is the protected resource. Each moose module serves MCP under
+	// its own prefix on the shared host, so a later module adds /drive/mcp.
+	MCPPath = "/email/mcp"
 )
 
 // ScopeMCP is the one scope this server issues.
@@ -153,6 +154,8 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle(TokenPath, cors(http.HandlerFunc(s.token)))
 	mux.HandleFunc("GET "+AuthorizePath, s.authorize)
 	mux.HandleFunc("GET "+PollPath, s.poll)
+	mux.HandleFunc("GET "+LoginPath, s.login)
+	mux.HandleFunc("GET "+LoginPollPath, s.loginPoll)
 	return noStore(mux)
 }
 
@@ -235,7 +238,7 @@ func noStore(next http.Handler) http.Handler {
 		h.Set("Cache-Control", "no-store")
 		h.Set("Pragma", "no-cache")
 		h.Set("X-Content-Type-Options", "nosniff")
-		h.Set("Referrer-Policy", "no-referrer")
+		h.Set("Referrer-Policy", "same-origin")
 		next.ServeHTTP(w, r)
 	})
 }

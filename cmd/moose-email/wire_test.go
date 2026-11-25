@@ -21,6 +21,10 @@ import (
 
 var quiet = slog.New(slog.NewTextHandler(io.Discard, nil))
 
+
+// noRedirect reports a redirect instead of following it.
+var noRedirect = &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+
 func noAWS(context.Context) (aws.Config, error) {
 	return aws.Config{}, errors.New("aws must not be loaded")
 }
@@ -59,13 +63,13 @@ func TestLocalConnectServesBehindASession(t *testing.T) {
 	srv := httptest.NewServer(newHandler("t", mount{connect.Prefix, w.connect.Handler()}))
 	defer srv.Close()
 
-	res, err := http.Get(srv.URL + connect.PagePath)
+	res, err := noRedirect.Get(srv.URL + connect.PagePath)
 	if err != nil {
 		t.Fatal(err)
 	}
 	res.Body.Close()
-	if res.StatusCode != http.StatusUnauthorized {
-		t.Fatalf("connect page without a session = %d, want 401", res.StatusCode)
+	if res.StatusCode != http.StatusSeeOther || res.Header.Get("Location") != connect.LoginPath {
+		t.Fatalf("connect page without a session = %d %q, want a redirect to sign-in", res.StatusCode, res.Header.Get("Location"))
 	}
 	res, err = http.Get(srv.URL + "/healthz")
 	if err != nil || res.StatusCode != 200 {
@@ -90,7 +94,7 @@ func TestDevIdentitySignsTheConnectPageIn(t *testing.T) {
 	}
 	defer res.Body.Close()
 	body, _ := io.ReadAll(res.Body)
-	if res.StatusCode != 200 || !strings.Contains(string(body), "Connected accounts") || !strings.Contains(string(body), "not configured") {
+	if res.StatusCode != 200 || !strings.Contains(string(body), "Connected accounts") || !strings.Contains(string(body), "read-only for now") {
 		t.Fatalf("page = %d %q", res.StatusCode, body)
 	}
 
@@ -103,10 +107,10 @@ func TestDevIdentitySignsTheConnectPageIn(t *testing.T) {
 	defer w2.store.Close()
 	srv2 := httptest.NewServer(w2.connect.Handler())
 	defer srv2.Close()
-	res2, _ := http.Get(srv2.URL + connect.PagePath)
+	res2, _ := noRedirect.Get(srv2.URL + connect.PagePath)
 	res2.Body.Close()
-	if res2.StatusCode != http.StatusUnauthorized {
-		t.Fatalf("prod page with a dev identity = %d, want 401", res2.StatusCode)
+	if res2.StatusCode != http.StatusSeeOther {
+		t.Fatalf("prod page with a dev identity = %d, want a redirect to sign-in", res2.StatusCode)
 	}
 }
 
@@ -183,24 +187,25 @@ func oauthConfig(t *testing.T) config.Config {
 }
 
 func TestOAuthProtectsMCPAndServesTheAuthorizationServer(t *testing.T) {
-	w, err := buildConnect(context.Background(), oauthConfig(t), quiet, noAWS)
+	cfg := oauthConfig(t)
+	w, err := buildConnect(context.Background(), cfg, quiet, noAWS)
 	if err != nil || w == nil || w.oauth == nil {
 		t.Fatalf("buildConnect = %v, %v", w, err)
 	}
 	defer w.store.Close()
 	mounts := append([]mount{{connect.Prefix, w.connect.Handler()}}, oauthMounts(w.oauth)...)
-	srv := httptest.NewServer(newHandlerAuth("t", w.oauth.Protect, mounts...))
+	srv := httptest.NewServer(newHandlerAuth("t", w.oauth.Protect, registerTools(w, cfg), mounts...))
 	defer srv.Close()
 
-	res, err := http.Post(srv.URL+"/mcp", "application/json", strings.NewReader("{}"))
+	res, err := http.Post(srv.URL+"/email/mcp", "application/json", strings.NewReader("{}"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	res.Body.Close()
-	if res.StatusCode != http.StatusUnauthorized || !strings.Contains(res.Header.Get("WWW-Authenticate"), "/.well-known/oauth-protected-resource/mcp") {
+	if res.StatusCode != http.StatusUnauthorized || !strings.Contains(res.Header.Get("WWW-Authenticate"), "/.well-known/oauth-protected-resource/email/mcp") {
 		t.Fatalf("/mcp without a token = %d %q, want 401 pointing at the resource metadata", res.StatusCode, res.Header.Get("WWW-Authenticate"))
 	}
-	for _, p := range []string{"/.well-known/oauth-authorization-server", "/.well-known/oauth-protected-resource/mcp", "/.well-known/oauth-protected-resource"} {
+	for _, p := range []string{"/.well-known/oauth-authorization-server", "/.well-known/oauth-protected-resource/email/mcp", "/.well-known/oauth-protected-resource"} {
 		res, err = http.Get(srv.URL + p)
 		if err != nil {
 			t.Fatal(err)
@@ -219,8 +224,8 @@ func TestOAuthProtectsMCPAndServesTheAuthorizationServer(t *testing.T) {
 	if res.StatusCode != http.StatusCreated {
 		t.Errorf("/register = %d", res.StatusCode)
 	}
-	for path, want := range map[string]int{"/authorize": 400, "/authorize/poll": 404, "/token": 405, connect.PagePath: 401} {
-		res, err = http.Get(srv.URL + path)
+	for path, want := range map[string]int{"/authorize": 400, "/authorize/poll": 404, "/token": 405, connect.PagePath: 303} {
+		res, err = noRedirect.Get(srv.URL + path)
 		if err != nil {
 			t.Fatal(err)
 		}

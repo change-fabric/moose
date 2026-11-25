@@ -10,6 +10,7 @@ import (
 	"encoding/hex"
 	"log/slog"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -109,11 +110,11 @@ type Options struct {
 	Now func() time.Time
 }
 
-// SurfaceOf is the default classifier: /mcp is mcp, a request carrying the
+// SurfaceOf is the default classifier: /mcp or a module's /<name>/mcp is mcp, a request carrying the
 // moose CLI user agent is cli, everything else is rest.
 func SurfaceOf(r *http.Request) string {
 	switch {
-	case r.URL.Path == "/mcp" || len(r.URL.Path) > 4 && r.URL.Path[:5] == "/mcp/":
+	case r.URL.Path == "/mcp" || strings.HasPrefix(r.URL.Path, "/mcp/") || strings.HasSuffix(r.URL.Path, "/mcp") || strings.Contains(r.URL.Path, "/mcp/"):
 		return "mcp"
 	case len(r.UserAgent()) >= 6 && r.UserAgent()[:6] == "moose/":
 		return "cli"
