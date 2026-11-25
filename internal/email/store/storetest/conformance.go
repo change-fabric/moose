@@ -835,6 +835,89 @@ func Run(t *testing.T, newStore func(t *testing.T) store.Store) {
 		}
 	})
 
+	t.Run("ApprovalLookupByKeyAndByAccountKind", func(t *testing.T) {
+		s := newStore(t)
+		mk := func(id, key, kind, acct string, at time.Time) {
+			_, _, err := s.CreateApproval(ctx, store.Approval{ID: id, Owner: "pat", Kind: kind, AccountID: acct, IdempotencyKey: key, ThreadID: "th-" + id, Created: at}, at)
+			must(t, err)
+		}
+		mk("e1", "k1", store.KindAccountSendEnable, "acc_1", now)
+		mk("e2", "k2", store.KindAccountSendEnable, "acc_1", now.Add(time.Minute))
+		mk("e3", "k3", store.KindAccountSendEnable, "acc_2", now)
+		mk("m1", "k4", store.KindEmailSend, "acc_1", now)
+		mk("d1", "k5", store.KindDashboardSession, "", now)
+		got, err := s.FindApprovals(ctx, store.KindAccountSendEnable, "acc_1")
+		must(t, err)
+		if len(got) != 2 || got[0].ID != "e2" || got[1].ID != "e1" {
+			t.Fatalf("FindApprovals = %+v, want e2 then e1 (newest first, one account, one kind)", got)
+		}
+		// The index follows status changes: it holds the row, not a copy.
+		_, err = s.TransitionApproval(ctx, "e2", []string{store.ApprovalPending}, store.ApprovalDenied, false)
+		must(t, err)
+		if got, _ = s.FindApprovals(ctx, store.KindAccountSendEnable, "acc_1"); got[0].Status != store.ApprovalDenied {
+			t.Fatalf("index row is stale: %+v", got[0])
+		}
+		if got, err = s.FindApprovals(ctx, store.KindAccountSendEnable, "acc_none"); err != nil || len(got) != 0 {
+			t.Fatalf("unknown account = %+v, %v", got, err)
+		}
+		if got, err = s.FindApprovals(ctx, store.KindEmailSend, ""); err != nil || len(got) != 0 {
+			t.Fatalf("no account = %+v, %v", got, err)
+		}
+		byKey, err := s.FindApprovalByKey(ctx, "k4")
+		must(t, err)
+		if byKey.ID != "m1" || byKey.ThreadID != "th-m1" {
+			t.Fatalf("FindApprovalByKey = %+v", byKey)
+		}
+		if _, err := s.FindApprovalByKey(ctx, "nope"); !errors.Is(err, store.ErrNotFound) {
+			t.Fatalf("unknown key err = %v", err)
+		}
+	})
+
+	t.Run("DraftMetaRoundTripAndTTL", func(t *testing.T) {
+		s := newStore(t)
+		if _, err := s.GetDraftMeta(ctx, "acc_1", "d1"); !errors.Is(err, store.ErrNotFound) {
+			t.Fatalf("missing draft meta err = %v", err)
+		}
+		must(t, s.PutDraftMeta(ctx, store.DraftMeta{AccountID: "acc_1", DraftID: "d1", ThreadID: "t1", ReplyAccountID: "acc_9", Updated: now}))
+		got, err := s.GetDraftMeta(ctx, "acc_1", "d1")
+		must(t, err)
+		if got.ThreadID != "t1" || got.ReplyAccountID != "acc_9" {
+			t.Fatalf("meta = %+v", got)
+		}
+		if _, err := s.GetDraftMeta(ctx, "acc_2", "d1"); !errors.Is(err, store.ErrNotFound) {
+			t.Fatalf("draft notes crossed accounts: %v", err)
+		}
+		// Notes share the account partition with contacts without disturbing them.
+		must(t, s.PutContact(ctx, store.Contact{AccountID: "acc_1", Address: "a@x.example", Trust: store.TrustKnown}))
+		cs, err := s.ListContacts(ctx, "acc_1", store.ContactFilter{})
+		must(t, err)
+		if len(cs) != 1 {
+			t.Fatalf("contacts = %+v, draft notes must not appear", cs)
+		}
+		if err := s.PutDraftMeta(ctx, store.DraftMeta{AccountID: "acc_1"}); err == nil {
+			t.Fatal("a draft meta without a draft id must be refused")
+		}
+	})
+
+	t.Run("KillSwitch", func(t *testing.T) {
+		s := newStore(t)
+		ks, err := s.KillSwitch(ctx)
+		must(t, err)
+		if ks.On {
+			t.Fatal("an unset kill switch must be off")
+		}
+		must(t, s.SetKillSwitch(ctx, true, "incident", now))
+		ks, err = s.KillSwitch(ctx)
+		must(t, err)
+		if !ks.On || ks.Reason != "incident" || !ks.At.Equal(now) {
+			t.Fatalf("kill switch = %+v", ks)
+		}
+		must(t, s.SetKillSwitch(ctx, false, "", now.Add(time.Minute)))
+		if ks, _ = s.KillSwitch(ctx); ks.On {
+			t.Fatal("the kill switch did not turn off")
+		}
+	})
+
 	claim := func(id, acct string, at time.Time) store.SendRow {
 		return store.SendRow{RequestID: id, Owner: "pat", AccountID: acct, Created: at}
 	}

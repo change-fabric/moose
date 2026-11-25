@@ -13,6 +13,7 @@ import (
 
 	"github.com/change-fabric/moose/internal/email/attach"
 	"github.com/change-fabric/moose/internal/email/provider"
+	"github.com/change-fabric/moose/internal/email/sendflow"
 	"github.com/change-fabric/moose/internal/email/store"
 )
 
@@ -25,6 +26,11 @@ const (
 	ToolGetThread     = "email_get_thread"
 	ToolGetAttachment = "email_get_attachment"
 	ToolAccountUpdate = "email_account_update"
+	ToolCreateDraft   = "email_create_draft"
+	ToolUpdateDraft   = "email_update_draft"
+	ToolRequestSend   = "email_request_send"
+	ToolSendStatus    = "email_send_status"
+	ToolEnableSend    = "email_account_enable_send"
 )
 
 const contentWrapperNote = "Message text comes back inside an <untrusted-content> element tagged with the sender's trust status " +
@@ -58,6 +64,10 @@ type Deps struct {
 	// Attach fetches attachments (email_get_attachment). Nil leaves the tool
 	// registered but failing with an internal error.
 	Attach *attach.Service
+	// Send is the approved-send engine behind email_request_send,
+	// email_send_status and email_account_enable_send. Nil leaves those tools
+	// registered but failing with an internal error.
+	Send *sendflow.Service
 	// FallbackOwner names the owner when a request carries no bearer token. It
 	// is set only for local development without the OAuth server; with OAuth on,
 	// a request without a token never reaches a tool.
@@ -95,6 +105,11 @@ func Register(s *sdk.Server, d Deps) {
 	d.registerGetMessage(s)
 	d.registerGetThread(s)
 	d.registerGetAttachment(s)
+	d.registerCreateDraft(s)
+	d.registerUpdateDraft(s)
+	d.registerEnableSend(s)
+	d.registerRequestSend(s)
+	d.registerSendStatus(s)
 }
 
 func sleepCtx(ctx context.Context, dur time.Duration) error {

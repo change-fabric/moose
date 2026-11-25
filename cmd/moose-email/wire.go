@@ -29,6 +29,7 @@ import (
 	"github.com/change-fabric/moose/internal/email/connect"
 	"github.com/change-fabric/moose/internal/email/envelope"
 	"github.com/change-fabric/moose/internal/email/oauthas"
+	"github.com/change-fabric/moose/internal/email/sendflow"
 	"github.com/change-fabric/moose/internal/email/store"
 	emaildynamo "github.com/change-fabric/moose/internal/email/store/dynamo"
 	emailsqlite "github.com/change-fabric/moose/internal/email/store/sqlite"
@@ -57,6 +58,9 @@ type wiring struct {
 	attach *attach.Service
 	// cursorKey signs search cursors; every Lambda instance derives the same one.
 	cursorKey []byte
+	// send is the send engine; nil unless the OAuth server and its service
+	// client are configured.
+	send *sendflow.Service
 }
 
 // buildConnect opens the email store and the token sealer and returns the
@@ -129,12 +133,25 @@ func buildConnect(ctx context.Context, cfg config.Config, log *slog.Logger, load
 		return fail(err)
 	}
 	google := connect.GoogleConfig(id, sec, e.BaseURL)
+	// The service client exists only where the OAuth server does: both need the
+	// HMAC key shared with the approval service. Without it, Enable send says
+	// it is unavailable.
+	var (
+		key      []byte
+		client   *api.Client
+		enableAp connect.Approver
+	)
+	if e.OAuthEnabled() {
+		if key, err = approverKey(ctx, *e, secret, needAWS); err != nil {
+			return fail(err)
+		}
+		client = &api.Client{BaseURL: serviceBase(*e), Secret: key}
+		enableAp = sendflow.ConnectApprover{Approver: client}
+	}
 	srv, err := connect.New(connect.Deps{
 		Store: st, Seal: seal, OAuth: google,
-		Profile: connect.GmailProfile(), Auth: auth,
+		Profile: connect.GmailProfile(), Auth: auth, Approver: enableAp,
 		BaseURL: e.BaseURL, InsecureCookies: base.Scheme != "https", Log: log,
-		// Approver stays nil until moose-approver exists; the page then says
-		// that Enable send is unavailable.
 	})
 	if err != nil {
 		return fail(err)
@@ -142,12 +159,12 @@ func buildConnect(ctx context.Context, cfg config.Config, log *slog.Logger, load
 	w := &wiring{store: st, connect: srv, providers: &accountprov.Source{Store: st, Seal: seal, OAuth: google}}
 	var cursorBase []byte
 	if e.OAuthEnabled() {
-		key, err := approverKey(ctx, *e, secret, needAWS)
-		if err != nil {
-			return fail(err)
-		}
 		if w.oauth, err = buildOAuth(*e, key, st, seal, log, base.Scheme != "https"); err != nil {
 			return fail(err)
+		}
+		w.send = &sendflow.Service{
+			Store: st, Seal: seal, Approver: client, Providers: w.providers,
+			ReceiptKey: []byte(e.ReceiptPublicKey), RPID: e.RPID, Live: e.Send.Live, Log: log,
 		}
 		cursorBase = key
 	} else {
@@ -204,15 +221,20 @@ func deriveKey(base []byte, purpose string) []byte {
 // service API (URL from email.approver_url, defaulting to the public origin) and
 // the pinned receipt key.
 func buildOAuth(e config.Email, key []byte, st store.Store, seal envelope.Sealer, log *slog.Logger, insecure bool) (*oauthas.Server, error) {
-	approverURL := e.ApproverURL
-	if approverURL == "" {
-		approverURL = e.BaseURL
-	}
 	return oauthas.New(oauthas.Deps{
-		Store: st, Seal: seal, Approver: &api.Client{BaseURL: approverURL, Secret: key},
+		Store: st, Seal: seal, Approver: &api.Client{BaseURL: serviceBase(e), Secret: key},
 		ReceiptKey: []byte(e.ReceiptPublicKey), RPID: e.RPID, Owner: e.Owner,
 		BaseURL: e.BaseURL, InsecureCookies: insecure, Log: log,
 	})
+}
+
+// serviceBase is where the approval service's API lives: email.approver_url,
+// defaulting to the public origin.
+func serviceBase(e config.Email) string {
+	if e.ApproverURL != "" {
+		return e.ApproverURL
+	}
+	return e.BaseURL
 }
 
 func openStore(ctx context.Context, cfg config.Config, needAWS func() (aws.Config, error)) (store.Store, error) {

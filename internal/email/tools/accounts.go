@@ -53,7 +53,7 @@ func (d Deps) registerListAccounts(s *sdk.Server) {
 		Name: ToolListAccounts,
 		Description: "List the connected email accounts: address, status, whether sending is enabled and, when it is, " +
 			"the hourly send cap and sends this hour, plus what the provider supports. " +
-			"Sending is off until the owner enables it per account on the moose accounts page. " +
+			"Sending is off until the owner enables it per account, with email_account_enable_send or on the moose accounts page, approved by passkey either way. " +
 			"Pass account (an id or exact address, \"group:<tag>\", or a list) to look at some accounts.",
 		InputSchema: &jsonschema.Schema{
 			Type:       "object",
@@ -73,6 +73,8 @@ func (d Deps) registerListAccounts(s *sdk.Server) {
 		if err != nil {
 			return resolveError(ctx, err), ListAccountsOut{}, nil
 		}
+		// An enable approval the owner has tapped since the last call lands now.
+		picked = d.applyPendingEnables(ctx, picked)
 		out := ListAccountsOut{Accounts: make([]AccountOut, 0, len(picked))}
 		for _, a := range picked {
 			ao, err := d.accountOut(ctx, a)

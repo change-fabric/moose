@@ -2,7 +2,7 @@ INSTRUCTIONS
 Many accounts may be connected. Always name the account by its address when you show or act on mail. Never guess an account for a write; if needs_account or account_not_found is returned, ask the user and show the candidates. Restate from_address exactly. Default for replies is the receiving account.
 
 TOOL email_list_accounts readOnly=true
-List the connected email accounts: address, status, whether sending is enabled and, when it is, the hourly send cap and sends this hour, plus what the provider supports. Sending is off until the owner enables it per account on the moose accounts page. Pass account (an id or exact address, "group:<tag>", or a list) to look at some accounts.
+List the connected email accounts: address, status, whether sending is enabled and, when it is, the hourly send cap and sends this hour, plus what the provider supports. Sending is off until the owner enables it per account, with email_account_enable_send or on the moose accounts page, approved by passkey either way. Pass account (an id or exact address, "group:<tag>", or a list) to look at some accounts.
 
 TOOL email_list_mailboxes readOnly=true
 List the mailboxes (labels or folders) of the connected accounts, so a search can be limited to one. Omit account to cover every account that is ok; accounts that need reconnecting are reported in `accounts` and skipped.
@@ -21,3 +21,18 @@ Read one attachment of a message: PDF, docx and plain text are converted to text
 
 TOOL email_account_update readOnly=false
 Organize one account: set its groups (tags such as "work"; a tool's account argument can then say "group:work") and whether it is the default account. This needs no approval because it cannot change what the account may do: it never touches send_enabled or the colour. Name the account by id or exact address.
+
+TOOL email_create_draft readOnly=false
+Create a plain-text draft in one account's mailbox. Nothing is sent. Name the account (account_id: its id or exact address) and restate its address exactly as from_address; a mismatch is an error. Plain text only: no attachments, no HTML. To answer a message pass in_reply_to (its composite id); without account_id you get needs_account with the receiving account as `suggested` and the send-enabled accounts as `candidates`, and nothing is created. A reply from a different account than the one that received the message works but returns the warning reply_from_differs, and the approval page flags it. Restate from_address exactly. Default for replies is the receiving account.
+
+TOOL email_update_draft readOnly=false
+Change a plain-text draft made with email_create_draft: only the fields you pass change. Nothing is sent. A send that was already requested for the old text stays tied to that old text; request the send again for the new text. Restate from_address exactly. Default for replies is the receiving account.
+
+TOOL email_account_enable_send readOnly=false
+Turn sending on or off for one account. A connected account is read-only until sending is enabled. enable=true needs the owner's passkey approval: you get status pending and an approval_url for the owner's phone; after they approve, call this tool again (or email_list_accounts) and it switches sending on. enable=false switches it off at once. Restate from_address exactly. Default for replies is the receiving account.
+
+TOOL email_request_send readOnly=false
+Ask the owner to approve sending a draft. moose snapshots the draft's exact bytes (plain text only, at most 256 KB), shows them on the owner's phone and waits for a passkey approval; you get status pending and an approval_url to hand to the owner. The send is refused unless sending is enabled for the account (email_account_enable_send). Pass one draft_id, or `drafts` to send several from the same account with one approval. After the owner approves, call email_send_status to carry it out. Restate from_address exactly. Default for replies is the receiving account.
+
+TOOL email_send_status readOnly=false
+Check a send request and, once the owner has approved it, carry it out. Call it again until it reaches a final state: sent, failed, unknown (it is not known whether the message left; check the Sent folder, it is never retried), would_send (approved, but live sending is switched off), denied or expired. pending means the approval is still waiting; blocked, rate_limited and already_claimed explain why nothing was sent yet. The message sent is the exact snapshot the owner approved, never the draft as it is now, and it is sent at most once. The source draft stays in the mailbox after a send. Pass a batch's request_id to carry out every message in it. Restate from_address exactly. Default for replies is the receiving account.
