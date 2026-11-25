@@ -425,30 +425,23 @@ func TestAccountsGetColoursInConnectOrderAndOneDefault(t *testing.T) {
 	}
 }
 
-func TestNicknameOptionAndCollisions(t *testing.T) {
+func TestHandlesComeFromTheAddress(t *testing.T) {
 	r := newRig(t)
-	r.connectAccount("pat@one.example", url.Values{"nickname": {"  Work  "}})
-	r.connectAccount("pat@two.example", nil) // default nickname "pat"
+	r.connectAccount("pat@one.example", url.Values{"nickname": {"Work"}}) // ignored: no user-defined labels
+	r.connectAccount("pat@two.example", nil)
 	r.connectAccount("pat@three.example", nil)
 	var nicks []string
 	for _, a := range r.accounts() {
 		nicks = append(nicks, a.Nickname)
 	}
-	if strings.Join(nicks, ",") != "Work,pat,pat-2" {
-		t.Fatalf("nicknames = %v, want Work,pat,pat-2 (a taken default gets a numeric suffix)", nicks)
-	}
-	res, body := r.post(connect.StartPath, url.Values{"nickname": {"work"}})
-	if res.StatusCode != http.StatusConflict || !strings.Contains(body, "already the nickname") {
-		t.Fatalf("duplicate nickname at start = %d %q", res.StatusCode, body)
-	}
-	if res, _ := r.post(connect.StartPath, url.Values{"nickname": {strings.Repeat("x", 30)}}); res.StatusCode != http.StatusBadRequest {
-		t.Fatalf("over-long nickname = %d, want 400", res.StatusCode)
+	if strings.Join(nicks, ",") != "pat,pat-2,pat-3" {
+		t.Fatalf("nicknames = %v, want pat,pat-2,pat-3 (a taken handle gets a numeric suffix)", nicks)
 	}
 }
 
 func TestReconnectKeepsIdentity(t *testing.T) {
 	r := newRig(t)
-	r.connectAccount("pat@x.example", url.Values{"nickname": {"Work"}})
+	r.connectAccount("pat@x.example", nil)
 	r.connectAccount("kim@x.example", nil)
 	orig := r.accounts()[0]
 	orig.Status, orig.RefreshToken = store.StatusNeedsReauth, []byte("stale")
@@ -459,7 +452,7 @@ func TestReconnectKeepsIdentity(t *testing.T) {
 	res, _ := r.connectAccount("pat@x.example", url.Values{"account_id": {orig.ID}})
 	r.wantStatus(res, http.StatusSeeOther)
 	got, _ := r.st.GetAccount(context.Background(), owner, orig.ID)
-	if got.ID != orig.ID || got.ColorIndex != orig.ColorIndex || got.Nickname != "Work" || got.Status != store.StatusOK || !got.IsDefault {
+	if got.ID != orig.ID || got.ColorIndex != orig.ColorIndex || got.Nickname != orig.Nickname || got.Status != store.StatusOK || !got.IsDefault {
 		t.Fatalf("after reconnect: %+v", got)
 	}
 	if pt, err := r.seal.Open(context.Background(), got.RefreshToken, envelope.Context{Owner: owner, AccountID: got.ID}); err != nil || !strings.Contains(string(pt), "pat@x.example") {
@@ -471,7 +464,7 @@ func TestReconnectKeepsIdentity(t *testing.T) {
 		t.Fatalf("%d accounts after connecting the same mailbox twice, want 2", n)
 	}
 	got, _ = r.st.GetAccount(context.Background(), owner, orig.ID)
-	if got.ColorIndex != 0 || got.Nickname != "Work" {
+	if got.ColorIndex != 0 || got.Nickname != orig.Nickname {
 		t.Fatalf("identity changed: %+v", got)
 	}
 }
@@ -597,19 +590,19 @@ func TestPageRowsAndControls(t *testing.T) {
 	sendOn.SendEnabled = true
 	_ = r.st.UpdateAccount(context.Background(), sendOn)
 	reauth := r.seed("Charlie", "charlie@x.example", 2, store.StatusNeedsReauth)
-	r.seed("Delta", "delta@x.example", 3, store.StatusDisconnected)
+	delta := r.seed("Delta", "delta@x.example", 3, store.StatusDisconnected)
 	_, body := r.get(connect.PagePath)
 
 	pos := func(s string) int { return strings.Index(body, s) }
-	if !(pos("Charlie") < pos("Alpha") && pos("Alpha") < pos("Bravo") && pos("Bravo") < pos("Delta")) || pos("Charlie") < 0 {
+	if !(pos("charlie@") < pos("alpha@") && pos("alpha@") < pos("bravo@") && pos("bravo@") < pos("delta@")) || pos("charlie@") < 0 {
 		t.Errorf("row order wrong: needs_reauth must sort first, then connect order")
 	}
 	for _, want := range []string{
 		"alpha@x.example", palette.At(0).Name, palette.At(1).Name, palette.At(2).Name, palette.At(3).Name, // address and colour name per row
 		"Needs reconnect", "Connected", "Disconnected", "Last sync", "never",
-		"Reconnect Charlie", "Reconnect Delta",
+		">Reconnect<",
 		"/connect/accounts/" + ok.ID + "/enable-send", "/connect/accounts/" + sendOn.ID + "/disable-send",
-		"/connect/accounts/" + reauth.ID + "/disconnect", "Type <b>Alpha</b> to confirm",
+		"/connect/accounts/" + reauth.ID + "/disconnect", "Type <b>alpha@x.example</b> to confirm",
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("page lacks %q", want)
@@ -626,17 +619,17 @@ func TestPageRowsAndControls(t *testing.T) {
 	if strings.Count(body, "Reconnect Alpha") != 0 {
 		t.Error("a healthy account offers Reconnect")
 	}
-	if strings.Contains(body, "/connect/accounts/") && strings.Contains(body, "Disconnect Delta") {
+	if strings.Contains(body, "/connect/accounts/"+delta.ID+"/disconnect") {
 		t.Error("a disconnected account offers Disconnect")
 	}
 }
 
-func TestPageEscapesNicknames(t *testing.T) {
+func TestPageEscapesAddresses(t *testing.T) {
 	r := newRig(t)
-	r.seed(`<img src=x onerror=1>`, "x@x.example", 0, store.StatusOK)
+	r.seed("x", `<img src=x onerror=1>@x.example`, 0, store.StatusOK)
 	_, body := r.get(connect.PagePath)
 	if strings.Contains(body, "<img src=x") {
-		t.Fatal("nickname rendered unescaped")
+		t.Fatal("address rendered unescaped")
 	}
 }
 
@@ -661,13 +654,13 @@ func TestPageHasSecurityHeadersAndPhoneViewport(t *testing.T) {
 	}
 }
 
-func TestDisconnectNeedsTheTypedNickname(t *testing.T) {
+func TestDisconnectNeedsTheTypedAddress(t *testing.T) {
 	r := newRig(t)
 	a := r.seed("Work", "w@x.example", 0, store.StatusOK)
 	a.SendEnabled = true
 	_ = r.st.UpdateAccount(context.Background(), a)
 	path := "/connect/accounts/" + a.ID + "/disconnect"
-	for _, wrong := range []string{"", "work", "Wor", "w@x.example"} {
+	for _, wrong := range []string{"", "Work", "w@x", "w@x.example.com"} {
 		res, _ := r.post(path, url.Values{"confirm": {wrong}})
 		r.wantStatus(res, http.StatusBadRequest)
 	}
@@ -675,7 +668,7 @@ func TestDisconnectNeedsTheTypedNickname(t *testing.T) {
 	if got.Status != store.StatusOK || len(got.RefreshToken) == 0 || !got.SendEnabled {
 		t.Fatalf("a wrong confirmation changed the account: %+v", got)
 	}
-	res, _ := r.post(path, url.Values{"confirm": {" Work "}})
+	res, _ := r.post(path, url.Values{"confirm": {" W@x.example "}})
 	r.wantStatus(res, http.StatusSeeOther)
 	got, _ = r.st.GetAccount(context.Background(), owner, a.ID)
 	if got.Status != store.StatusDisconnected || len(got.RefreshToken) != 0 || got.SendEnabled || got.Nickname != "Work" {

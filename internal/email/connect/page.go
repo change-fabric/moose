@@ -65,7 +65,7 @@ type StaticOwner string
 func (o StaticOwner) Owner(*http.Request) (string, bool) { return string(o), o != "" }
 
 type rowView struct {
-	ID, Nickname, Address, DisplayName string
+	ID, Address, DisplayName string
 	Initial                            string
 	ColorName, Hex, Ink, Pattern       string
 	Groups                             string
@@ -107,7 +107,7 @@ func rows(accts []store.Account, approverReady bool) []rowView {
 			last = a.LastSyncAt.UTC().Format("2006-01-02 15:04 UTC")
 		}
 		out = append(out, rowView{
-			ID: a.ID, Initial: initial(a.Nickname), Nickname: a.Nickname, Address: a.Address, DisplayName: a.DisplayName,
+			ID: a.ID, Initial: initial(a.Address), Address: a.Address, DisplayName: a.DisplayName,
 			ColorName: c.Name, Hex: c.Hex, Ink: c.Ink, Pattern: palette.Pattern(a.ColorIndex),
 			Groups: strings.Join(a.Groups, ", "), Status: a.Status, StatusLabel: label, LastSync: last,
 			SendEnabled: a.SendEnabled, IsDefault: a.IsDefault,
@@ -123,9 +123,9 @@ func rows(accts []store.Account, approverReady bool) []rowView {
 	return out
 }
 
-// initial is the monogram: the nickname's first character, upper-cased.
-func initial(nick string) string {
-	for _, r := range nick {
+// initial is the monogram: the address's first character, upper-cased.
+func initial(text string) string {
+	for _, r := range text {
 		return strings.ToUpper(string(r))
 	}
 	return "?"
@@ -157,7 +157,7 @@ func (s *Server) page(w http.ResponseWriter, r *http.Request) {
 	} {
 		if id := q.Get(key); id != "" {
 			if a, ok := findByID(accts, id); ok {
-				v.Notice = strings.Replace(tmpl, "%s", a.Nickname+" ("+a.Address+")", 1)
+				v.Notice = strings.Replace(tmpl, "%s", a.Address, 1)
 			}
 		}
 	}
@@ -205,7 +205,6 @@ button,input[type=text]{min-height:44px;font:inherit;border-radius:8px;border:1p
 button{cursor:pointer;font-weight:600}
 button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
 @media (prefers-color-scheme:dark){button.primary{color:#0b1b2e}}
-button.danger{color:var(--bad);border-color:var(--bad)}
 button:focus-visible,input:focus-visible,a:focus-visible{outline:3px solid var(--accent);outline-offset:2px}
 .notice{border:1px solid var(--ok);color:var(--ok);border-radius:8px;padding:.6rem .9rem;margin-bottom:1rem}
 .note{color:var(--muted);border-left:3px solid var(--line);padding:.1rem 0 .1rem .75rem;margin:0 0 1.25rem}
@@ -217,7 +216,17 @@ button:focus-visible,input:focus-visible,a:focus-visible{outline:3px solid var(-
 .add .hint{color:var(--muted);font-size:.9rem;margin:.75rem 0 0}
 .add ol{color:var(--muted);font-size:.9rem;margin:.25rem 0 0;padding-left:1.25rem}
 .empty{border:1px dashed var(--line);border-radius:10px;padding:1rem;color:var(--muted);margin:0}
-details summary{cursor:pointer;min-height:44px;display:flex;align-items:center}
+details.danger-zone{margin-top:.75rem}
+details.danger-zone>summary{list-style:none;display:inline-flex;align-items:center;min-height:44px;padding:0 .9rem;border:1px solid var(--bad);border-radius:8px;color:var(--bad);font-weight:600;cursor:pointer}
+details.danger-zone>summary::-webkit-details-marker{display:none}
+details.danger-zone[open]>summary{background:var(--bad);color:var(--card)}
+.confirm{margin-top:.75rem;border:1px solid var(--bad);border-radius:8px;padding:.75rem}
+.confirm p{margin:0 0 .5rem;color:var(--bad)}
+.confirm form{display:flex;flex-wrap:wrap;gap:.5rem;align-items:center;width:100%}
+.confirm label{flex-basis:100%}
+.confirm input[type=text]{flex:1 1 14rem;min-width:0}
+button.danger{background:var(--bad);border-color:var(--bad);color:var(--card)}
+button.danger:disabled{opacity:.45;cursor:not-allowed}
 @media (prefers-reduced-motion:no-preference){button{transition:background-color .15s}}
 `
 
@@ -233,8 +242,7 @@ var pageTmpl = template.Must(template.New("page").Parse(`<!doctype html>
 {{range .Rows}}<li class="acct"><section aria-labelledby="n-{{.ID}}">
  <div class="head">
   <span class="swatch pat-{{.Pattern}}" style="background-color:{{.Hex}};color:{{.Ink}}" aria-hidden="true">{{.Initial}}</span>
-  <div><div class="nick" id="n-{{.ID}}">{{.Nickname}}{{if .IsDefault}} <small>(default)</small>{{end}}</div>
-  <div class="addr">{{.Address}}</div></div>
+  <div><div class="nick addr" id="n-{{.ID}}">{{.Address}}{{if .IsDefault}} <small>(default)</small>{{end}}</div></div>
   <span class="chip {{.Status}}">{{.StatusLabel}}</span>
  </div>
  <dl class="meta">
@@ -246,22 +254,23 @@ var pageTmpl = template.Must(template.New("page").Parse(`<!doctype html>
   {{if .LastError}}<dt>Last error</dt><dd class="err">{{.LastError}}</dd>{{end}}
  </dl>
  <div class="actions">
-  {{if .CanReconnect}}<form method="post" action="/connect/google/start"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="account_id" value="{{.ID}}"><button class="primary" type="submit">Reconnect {{.Nickname}}</button></form>{{end}}
+  {{if .CanReconnect}}<form method="post" action="/connect/google/start"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="account_id" value="{{.ID}}"><button class="primary" type="submit">Reconnect</button></form>{{end}}
   {{if .SendEnabled}}<form method="post" action="/connect/accounts/{{.ID}}/disable-send"><input type="hidden" name="csrf" value="{{$.CSRF}}"><button type="submit">Disable send</button></form>{{end}}
   {{if .CanEnableSend}}<form method="post" action="/connect/accounts/{{.ID}}/enable-send"><input type="hidden" name="csrf" value="{{$.CSRF}}"><button type="submit">Enable send (passkey)</button></form>{{end}}
  </div>
- {{if not .Disconnected}}<details><summary>Disconnect {{.Nickname}}</summary>
+ {{if not .Disconnected}}<details class="danger-zone"><summary>Disconnect</summary>
+  <div class="confirm">
+  <p>This deletes the stored Google tokens for <b>{{.Address}}</b>. Claude loses access until you connect it again.</p>
   <form method="post" action="/connect/accounts/{{.ID}}/disconnect"><input type="hidden" name="csrf" value="{{$.CSRF}}">
-   <label for="c-{{.ID}}">Type <b>{{.Nickname}}</b> to confirm</label>
-   <input type="text" id="c-{{.ID}}" name="confirm" autocomplete="off" required>
-   <button class="danger" type="submit">Disconnect</button></form>
+   <label for="c-{{.ID}}">Type <b>{{.Address}}</b> to confirm</label>
+   <input type="text" id="c-{{.ID}}" name="confirm" autocomplete="off" spellcheck="false" autocapitalize="off" required>
+   <button class="danger" type="submit">Disconnect permanently</button></form>
+  </div>
  </details>{{end}}
 </section></li>{{end}}
 </ul>{{else}}<p class="empty">No accounts connected yet. Connect your first Gmail account below.</p>{{end}}
 <section class="add" aria-labelledby="add-h"><h2 id="add-h" style="font-size:1.1rem;margin:0 0 .5rem">Connect a Google account</h2>
-<label for="nickname">Nickname <span style="font-weight:400;color:var(--muted)">(optional, e.g. Personal or Work)</span></label>
 <form method="post" action="/connect/google/start"><input type="hidden" name="csrf" value="{{.CSRF}}">
-<input type="text" id="nickname" name="nickname" maxlength="24" autocomplete="off" placeholder="Personal">
 <button class="primary" type="submit">Connect Google account</button></form>
 <p class="hint">Google asks for permission to read mail and manage drafts. Because this is your own private app, Google first shows an unverified-app warning:</p>
 <ol><li>Click <b>Advanced</b>.</li><li>Click <b>Go to moose.changefabric.org (unsafe)</b>.</li><li>Allow both permissions.</li></ol>

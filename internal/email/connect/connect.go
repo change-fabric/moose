@@ -246,19 +246,6 @@ func (s *Server) start(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		st.ReconnectID = id
-	} else if nick := strings.TrimSpace(r.PostFormValue("nickname")); nick != "" {
-		display, slug, err := store.NormalizeNickname(nick)
-		if err != nil {
-			s.fail(w, http.StatusBadRequest, "Nickname not allowed", err.Error())
-			return
-		}
-		for _, a := range accts {
-			if _, s2, _ := store.NormalizeNickname(a.Nickname); s2 == slug {
-				s.fail(w, http.StatusConflict, "Nickname taken", fmt.Sprintf("%q is already the nickname of another account.", display))
-				return
-			}
-		}
-		st.Nickname = display
 	}
 	state := randomToken(32)
 	verifier := oauth2.GenerateVerifier()
@@ -520,9 +507,9 @@ func (s *Server) disconnect(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if strings.TrimSpace(r.PostFormValue("confirm")) != a.Nickname {
-		s.fail(w, http.StatusBadRequest, "Nickname did not match",
-			fmt.Sprintf("To disconnect %s, type its nickname exactly. Nothing was changed.", a.Nickname))
+	if !strings.EqualFold(strings.TrimSpace(r.PostFormValue("confirm")), a.Address) {
+		s.fail(w, http.StatusBadRequest, "Address did not match",
+			fmt.Sprintf("To disconnect %s, type its address exactly. Nothing was changed.", a.Address))
 		return
 	}
 	if err := s.d.Store.DisconnectAccount(r.Context(), owner, a.ID, s.d.Now()); err != nil {
@@ -546,7 +533,7 @@ func (s *Server) enableSend(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, PagePath, http.StatusSeeOther)
 		return
 	case a.Status != store.StatusOK:
-		s.fail(w, http.StatusConflict, "Account not ready", fmt.Sprintf("%s is %s. Reconnect it before enabling send.", a.Nickname, strings.ReplaceAll(a.Status, "_", " ")))
+		s.fail(w, http.StatusConflict, "Account not ready", fmt.Sprintf("%s is %s. Reconnect it before enabling send.", a.Address, strings.ReplaceAll(a.Status, "_", " ")))
 		return
 	case s.d.Approver == nil:
 		s.fail(w, http.StatusServiceUnavailable, "Approver not configured", "Enabling send needs a passkey approval and this deployment has no approver configured.")

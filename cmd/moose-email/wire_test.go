@@ -90,7 +90,7 @@ func TestDevIdentitySignsTheConnectPageIn(t *testing.T) {
 	}
 	defer res.Body.Close()
 	body, _ := io.ReadAll(res.Body)
-	if res.StatusCode != 200 || !strings.Contains(string(body), "Connected accounts") || !strings.Contains(string(body), "not configured") {
+	if res.StatusCode != 200 || !strings.Contains(string(body), "Connected accounts") || !strings.Contains(string(body), "read-only for now") {
 		t.Fatalf("page = %d %q", res.StatusCode, body)
 	}
 
