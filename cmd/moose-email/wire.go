@@ -2,6 +2,9 @@ package main
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -20,6 +23,7 @@ import (
 
 	"github.com/change-fabric/moose/internal/approver/api"
 	"github.com/change-fabric/moose/internal/config"
+	"github.com/change-fabric/moose/internal/email/accountprov"
 	"github.com/change-fabric/moose/internal/email/connect"
 	"github.com/change-fabric/moose/internal/email/envelope"
 	"github.com/change-fabric/moose/internal/email/oauthas"
@@ -44,6 +48,11 @@ type wiring struct {
 	connect *connect.Server
 	// oauth is nil unless the email: section configures the OAuth server.
 	oauth *oauthas.Server
+	// providers builds the mailbox provider for a stored account, with the
+	// per-account access-token cache.
+	providers *accountprov.Source
+	// cursorKey signs search cursors; every Lambda instance derives the same one.
+	cursorKey []byte
 }
 
 // buildConnect opens the email store and the token sealer and returns the
@@ -115,8 +124,9 @@ func buildConnect(ctx context.Context, cfg config.Config, log *slog.Logger, load
 	if err != nil {
 		return fail(err)
 	}
+	google := connect.GoogleConfig(id, sec, e.BaseURL)
 	srv, err := connect.New(connect.Deps{
-		Store: st, Seal: seal, OAuth: connect.GoogleConfig(id, sec, e.BaseURL),
+		Store: st, Seal: seal, OAuth: google,
 		Profile: connect.GmailProfile(), Auth: auth,
 		BaseURL: e.BaseURL, InsecureCookies: base.Scheme != "https", Log: log,
 		// Approver stays nil until moose-approver exists; the page then says
@@ -125,20 +135,27 @@ func buildConnect(ctx context.Context, cfg config.Config, log *slog.Logger, load
 	if err != nil {
 		return fail(err)
 	}
-	w := &wiring{store: st, connect: srv}
+	w := &wiring{store: st, connect: srv, providers: &accountprov.Source{Store: st, Seal: seal, OAuth: google}}
+	var cursorBase []byte
 	if e.OAuthEnabled() {
-		if w.oauth, err = buildOAuth(ctx, *e, st, seal, log, base.Scheme != "https", secret, needAWS); err != nil {
+		key, err := approverKey(ctx, *e, secret, needAWS)
+		if err != nil {
 			return fail(err)
 		}
+		if w.oauth, err = buildOAuth(*e, key, st, seal, log, base.Scheme != "https"); err != nil {
+			return fail(err)
+		}
+		cursorBase = key
+	} else {
+		cursorBase = []byte(e.DevKey)
 	}
+	w.cursorKey = deriveKey(cursorBase, "moose-email/search-cursor/v1")
 	return w, nil
 }
 
-// buildOAuth builds the authorization server: an HMAC client for the approver's
-// service API (URL from email.approver_url, defaulting to the public origin) and
-// the pinned receipt key.
-func buildOAuth(ctx context.Context, e config.Email, st store.Store, seal envelope.Sealer, log *slog.Logger,
-	insecure bool, secret secretFunc, needAWS func() (aws.Config, error)) (*oauthas.Server, error) {
+// approverKey returns the HMAC key shared with the approver's service API, from
+// the config value or the Secrets Manager secret it names.
+func approverKey(ctx context.Context, e config.Email, secret secretFunc, needAWS func() (aws.Config, error)) ([]byte, error) {
 	key := []byte(e.ApproverSecret)
 	if e.ApproverSecretARN != "" {
 		if secret == nil {
@@ -156,6 +173,26 @@ func buildOAuth(ctx context.Context, e config.Email, st store.Store, seal envelo
 	if len(key) < 32 {
 		return nil, errors.New("the approver service secret must be at least 32 bytes")
 	}
+	return key, nil
+}
+
+// deriveKey makes a purpose-bound key from base so one secret never signs two
+// kinds of thing. An empty base gives a random key, which suits one process only.
+func deriveKey(base []byte, purpose string) []byte {
+	if len(base) == 0 {
+		k := make([]byte, 32)
+		_, _ = rand.Read(k)
+		return k
+	}
+	m := hmac.New(sha256.New, base)
+	m.Write([]byte(purpose))
+	return m.Sum(nil)
+}
+
+// buildOAuth builds the authorization server: an HMAC client for the approver's
+// service API (URL from email.approver_url, defaulting to the public origin) and
+// the pinned receipt key.
+func buildOAuth(e config.Email, key []byte, st store.Store, seal envelope.Sealer, log *slog.Logger, insecure bool) (*oauthas.Server, error) {
 	approverURL := e.ApproverURL
 	if approverURL == "" {
 		approverURL = e.BaseURL

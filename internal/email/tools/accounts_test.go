@@ -108,9 +108,9 @@ func TestListAccountsOnlyShowsTheOwnersAccounts(t *testing.T) {
 	}
 }
 
-func TestListAccountsAcceptsIDNicknameAndAddress(t *testing.T) {
+func TestListAccountsAcceptsIDAndAddressNotNickname(t *testing.T) {
 	d := tools.Deps{Store: seed(t), FallbackOwner: "pat"}
-	for _, ref := range []string{"acc_two", "home base", "Home  Base", "HOME@example.com"} {
+	for _, ref := range []string{"acc_two", "HOME@example.com", " home@example.com "} {
 		_, out := call(t, d, map[string]any{"account": ref})
 		if len(out.Accounts) != 1 || out.Accounts[0].AccountID != "acc_two" {
 			t.Errorf("ref %q = %+v", ref, out.Accounts)
@@ -120,6 +120,19 @@ func TestListAccountsAcceptsIDNicknameAndAddress(t *testing.T) {
 	if len(out.Accounts) != 2 {
 		t.Errorf("all = %+v", out.Accounts)
 	}
+	// Accounts are labelled by address: a nickname no longer names one.
+	if res, _ := call(t, d, map[string]any{"account": "Home Base"}); !res.IsError {
+		t.Error("a nickname must not resolve")
+	}
+	// A list is the union of its items.
+	_, out = call(t, d, map[string]any{"account": []string{"acc_two", "work@example.com"}})
+	if len(out.Accounts) != 2 {
+		t.Errorf("list = %+v", out.Accounts)
+	}
+	_, out = call(t, d, map[string]any{"account": "group:jobs"})
+	if len(out.Accounts) != 1 || out.Accounts[0].AccountID != "acc_one" {
+		t.Errorf("group = %+v", out.Accounts)
+	}
 }
 
 func TestListAccountsNeverGuesses(t *testing.T) {
@@ -128,7 +141,7 @@ func TestListAccountsNeverGuesses(t *testing.T) {
 		t.Fatal("a near miss must not resolve")
 	}
 	text := res.Content[0].(*sdk.TextContent).Text
-	for _, want := range []string{"account_not_found", "Work <work@example.com> (acc_one)", "Home Base <home@example.com> (acc_two)"} {
+	for _, want := range []string{"account_not_found", "work@example.com (acc_one)", "home@example.com (acc_two)"} {
 		if !strings.Contains(text, want) {
 			t.Errorf("error %q lacks %q", text, want)
 		}
@@ -164,10 +177,18 @@ func TestListAccountsIsAnnotatedReadOnly(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(list.Tools) != 1 || list.Tools[0].Name != "email_list_accounts" {
-		t.Fatalf("slice must register exactly email_list_accounts, got %+v", list.Tools)
+	readOnly := map[string]bool{"email_list_accounts": true, "email_list_mailboxes": true, "email_search": true, "email_get_message": true, "email_get_thread": true, "email_account_update": false}
+	if len(list.Tools) != len(readOnly) {
+		t.Fatalf("registered %d tools, want %d: %+v", len(list.Tools), len(readOnly), list.Tools)
 	}
-	if an := list.Tools[0].Annotations; an == nil || !an.ReadOnlyHint {
-		t.Fatalf("annotations = %+v", an)
+	for _, tl := range list.Tools {
+		want, ok := readOnly[tl.Name]
+		if !ok {
+			t.Errorf("unexpected tool %s", tl.Name)
+			continue
+		}
+		if tl.Annotations == nil || tl.Annotations.ReadOnlyHint != want {
+			t.Errorf("%s annotations = %+v, readOnly want %v", tl.Name, tl.Annotations, want)
+		}
 	}
 }

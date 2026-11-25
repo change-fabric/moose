@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -86,8 +87,8 @@ func TestGetMessageBodyAndAttachments(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if m.BodyText != "hi there" {
-		t.Errorf("body %q", m.BodyText)
+	if m.BodyText != "hi there" || m.BodyHTML != "<b>hi</b>" {
+		t.Errorf("body %q html %q", m.BodyText, m.BodyHTML)
 	}
 	if len(m.Attachments) != 1 || m.Attachments[0].ID != "att1" || m.Attachments[0].Filename != "a.pdf" {
 		t.Errorf("attachments %+v", m.Attachments)
@@ -163,7 +164,7 @@ func TestDraftAndSendCarryExactBytes(t *testing.T) {
 }
 
 func TestErrorsMapToSentinels(t *testing.T) {
-	for status, want := range map[int]error{404: provider.ErrNotFound, 401: provider.ErrAuth, 400: provider.ErrInvalidQuery} {
+	for status, want := range map[int]error{404: provider.ErrNotFound, 401: provider.ErrAuth, 400: provider.ErrInvalidQuery, 429: provider.ErrRateLimited} {
 		c := newClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(status)
@@ -228,5 +229,43 @@ func TestProfileSurvivesSendAsFailureAndMapsAuthErrors(t *testing.T) {
 	}))
 	if _, err := bad.Profile(context.Background()); !errors.Is(err, provider.ErrAuth) {
 		t.Fatalf("401 err = %v, want provider.ErrAuth", err)
+	}
+}
+
+func TestQuotaForbiddenIsRateLimitedButOtherForbiddenIsNot(t *testing.T) {
+	for reason, want := range map[string]bool{"rateLimitExceeded": true, "userRateLimitExceeded": true, "insufficientPermissions": false} {
+		c := newClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(403)
+			_, _ = w.Write([]byte(`{"error":{"code":403,"message":"x","errors":[{"reason":"` + reason + `","message":"x"}]}}`))
+		}))
+		_, err := c.GetMessage(context.Background(), "m")
+		if errors.Is(err, provider.ErrRateLimited) != want {
+			t.Errorf("reason %s: err = %v, rate limited want %v", reason, err, want)
+		}
+	}
+}
+
+// A search fetches metadata one message at a time, so the page size is capped.
+func TestSearchCapsMetadataFetchesPerCall(t *testing.T) {
+	var gotMax string
+	var fetched int
+	c := newClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/gmail/v1/users/me/messages" {
+			gotMax = r.URL.Query().Get("maxResults")
+			writeJSON(w, map[string]any{"messages": []map[string]string{{"id": "m1"}}})
+			return
+		}
+		fetched++
+		writeJSON(w, map[string]any{"id": "m1"})
+	}))
+	if _, err := c.Search(context.Background(), provider.Query{Limit: 500}); err != nil {
+		t.Fatal(err)
+	}
+	if gotMax != strconv.Itoa(provider.MaxFetch) || provider.MaxFetch != 25 {
+		t.Fatalf("maxResults = %q, want %d", gotMax, provider.MaxFetch)
+	}
+	if fetched != 1 {
+		t.Fatalf("fetched %d", fetched)
 	}
 }
