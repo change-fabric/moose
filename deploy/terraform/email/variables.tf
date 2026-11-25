@@ -53,6 +53,18 @@ variable "approver_zip_path" {
   default     = "../../../dist/moose-approver.zip"
 }
 
+variable "sweeper_zip_path" {
+  description = "moose-attach-sweeper deployment zip. Build it with `make lambda-sweeper`."
+  type        = string
+  default     = "../../../dist/moose-attach-sweeper.zip"
+}
+
+variable "alarm_emails" {
+  description = "Addresses subscribed to the moose alerts topic (attachment sweeper alarms). Null means the same addresses as budget_emails. Each must confirm the SNS subscription once."
+  type        = list(string)
+  default     = null
+}
+
 variable "github_repository_id" {
   description = "Immutable numeric id of the GitHub repository whose Actions may assume the deploy role (gh api repos/<owner>/<repo> --jq .id). The id survives renames; the name does not."
   type        = string

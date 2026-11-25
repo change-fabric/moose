@@ -20,6 +20,14 @@ data "aws_iam_policy_document" "email" {
     resources = [aws_kms_key.data.arn]
   }
 
+  # email_get_attachment streams into att/ and presigns the link; the sweeper
+  # (its own role) deletes. The key above covers SSE-KMS on these objects.
+  statement {
+    sid       = "Attachments"
+    actions   = ["s3:PutObject", "s3:GetObject", "s3:DeleteObject", "s3:AbortMultipartUpload"]
+    resources = ["${aws_s3_bucket.attachments.arn}/att/*"]
+  }
+
   statement {
     sid     = "Secrets"
     actions = ["secretsmanager:GetSecretValue"]
@@ -45,6 +53,7 @@ module "email" {
     MOOSE_DYNAMO_TABLE              = aws_dynamodb_table.email.name
     MOOSE_EMAIL_BASE_URL            = local.origin
     MOOSE_EMAIL_KMS_KEY_ID          = aws_kms_key.data.arn
+    MOOSE_EMAIL_ATTACH_BUCKET       = aws_s3_bucket.attachments.bucket
     MOOSE_GOOGLE_OAUTH_SECRET_ARN   = aws_secretsmanager_secret.google_oauth.arn
     MOOSE_EMAIL_OWNER               = var.owner
     MOOSE_EMAIL_RP_ID               = var.domain_name

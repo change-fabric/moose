@@ -118,6 +118,10 @@ type Email struct {
 	// ApproverURL is where moose-approver's service API lives; it defaults to BaseURL.
 	ApproverURL string `yaml:"approver_url"`
 
+	// AttachBucket is the private S3 bucket email_get_attachment streams into
+	// (MOOSE_EMAIL_ATTACH_BUCKET). Empty leaves attachment reads unconfigured.
+	AttachBucket string `yaml:"attach_bucket"`
+
 	// Env-only settings (secrets).
 	// ApproverSecretARN names the Secrets Manager secret holding the HMAC key
 	// shared with moose-approver; ApproverSecret is the dev alternative.
@@ -226,6 +230,7 @@ func applyEnv(cfg *Config, getenv func(string) string) {
 	if cfg.Email != nil {
 		set(&cfg.Email.BaseURL, "MOOSE_EMAIL_BASE_URL")
 		set(&cfg.Email.KMSKeyID, "MOOSE_EMAIL_KMS_KEY_ID")
+		set(&cfg.Email.AttachBucket, "MOOSE_EMAIL_ATTACH_BUCKET")
 		set(&cfg.Email.DevKey, "MOOSE_EMAIL_DEV_KEY")
 		set(&cfg.Email.Owner, "MOOSE_EMAIL_OWNER")
 		set(&cfg.Email.RPID, "MOOSE_EMAIL_RP_ID")

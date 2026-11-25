@@ -25,7 +25,7 @@ const (
 	userMe         = "me"
 	defaultLimit   = 25
 	maxLimit       = provider.MaxFetch
-	maxAttachBytes = 50 << 20
+	maxAttachBytes = provider.MaxAttachment
 )
 
 // Client is one connected Gmail account.
@@ -161,7 +161,7 @@ func (c *Client) OpenAttachment(ctx context.Context, messageID, attachmentID str
 		return nil, provider.AttachmentMeta{}, fmt.Errorf("%w: attachment %s on message %s", provider.ErrNotFound, attachmentID, messageID)
 	}
 	if meta.Size > maxAttachBytes {
-		return nil, provider.AttachmentMeta{}, fmt.Errorf("gmail: attachment is %d bytes, over the %d limit", meta.Size, maxAttachBytes)
+		return nil, provider.AttachmentMeta{}, fmt.Errorf("%w: %d bytes, limit %d", provider.ErrTooLarge, meta.Size, maxAttachBytes)
 	}
 	body, err := c.svc.Users.Messages.Attachments.Get(userMe, messageID, attachmentID).Context(ctx).Do()
 	if err != nil {

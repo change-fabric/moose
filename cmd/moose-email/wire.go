@@ -19,11 +19,13 @@ import (
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/kms"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/secretsmanager"
 
 	"github.com/change-fabric/moose/internal/approver/api"
 	"github.com/change-fabric/moose/internal/config"
 	"github.com/change-fabric/moose/internal/email/accountprov"
+	"github.com/change-fabric/moose/internal/email/attach"
 	"github.com/change-fabric/moose/internal/email/connect"
 	"github.com/change-fabric/moose/internal/email/envelope"
 	"github.com/change-fabric/moose/internal/email/oauthas"
@@ -51,6 +53,8 @@ type wiring struct {
 	// providers builds the mailbox provider for a stored account, with the
 	// per-account access-token cache.
 	providers *accountprov.Source
+	// attach serves email_get_attachment; nil when email.attach_bucket is unset.
+	attach *attach.Service
 	// cursorKey signs search cursors; every Lambda instance derives the same one.
 	cursorKey []byte
 }
@@ -148,6 +152,13 @@ func buildConnect(ctx context.Context, cfg config.Config, log *slog.Logger, load
 		cursorBase = key
 	} else {
 		cursorBase = []byte(e.DevKey)
+	}
+	if e.AttachBucket != "" {
+		ac, err := needAWS()
+		if err != nil {
+			return fail(err)
+		}
+		w.attach = &attach.Service{Store: attach.NewS3(s3.NewFromConfig(ac), e.AttachBucket, e.KMSKeyID)}
 	}
 	w.cursorKey = deriveKey(cursorBase, "moose-email/search-cursor/v1")
 	return w, nil

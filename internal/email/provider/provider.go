@@ -22,7 +22,14 @@ var (
 	// ErrRateLimited means the provider asked the caller to slow down (HTTP 429 or
 	// a quota error). It is transient: back off and retry.
 	ErrRateLimited = errors.New("provider: rate limited")
+	// ErrTooLarge means an attachment is over MaxAttachment and was not downloaded.
+	ErrTooLarge = errors.New("provider: attachment too large")
 )
+
+// MaxAttachment is the largest attachment a provider downloads. It matches the
+// text extractor's download cap, and it bounds the memory a provider that must
+// read an attachment whole (Gmail returns it as one base64 JSON field) can use.
+const MaxAttachment = 25 << 20
 
 // MaxFetch is the most messages a provider fetches metadata for in one
 // Search call. Each is a separate request on Gmail, so the cap bounds the cost
