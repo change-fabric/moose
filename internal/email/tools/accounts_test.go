@@ -84,13 +84,13 @@ func TestListAccountsReturnsEveryR1AndR6Field(t *testing.T) {
 		t.Fatalf("res = %+v, accounts = %+v", res, out.Accounts)
 	}
 	a := out.Accounts[0]
-	if a.AccountID != "acc_one" || a.Nickname != "Work" || a.Address != "work@example.com" || a.DisplayName != "Pat Work" ||
-		len(a.Groups) != 1 || a.ColorName != "Blue" || a.Status != "ok" || !a.SendEnabled || a.HourlyCap != 10 ||
-		a.SentThisHour != 1 || !a.Capabilities.Threads || a.LastSyncAt == nil || a.Provider != "gmail" {
+	if a.AccountID != "acc_one" || a.Address != "work@example.com" || a.DisplayName != "Pat Work" ||
+		len(a.Groups) != 1 || a.ColorName != "Blue" || a.Status != "ok" || !a.SendEnabled || a.HourlyCap == nil || *a.HourlyCap != 10 ||
+		a.SentThisHour == nil || *a.SentThisHour != 1 || !a.Capabilities.Threads || a.LastSyncAt == nil || a.Provider != "gmail" {
 		t.Fatalf("account = %+v", a)
 	}
 	b := out.Accounts[1]
-	if b.Status != "needs_reauth" || b.LastError != "invalid_grant" || b.SendEnabled || b.ColorName != "Crimson" || b.SentThisHour != 0 || b.Groups == nil {
+	if b.Status != "needs_reauth" || b.LastError != "invalid_grant" || b.SendEnabled || b.ColorName != "Crimson" || b.SentThisHour != nil || b.HourlyCap != nil || b.Groups != nil {
 		t.Fatalf("second account = %+v", b)
 	}
 	raw, _ := json.Marshal(res.StructuredContent)

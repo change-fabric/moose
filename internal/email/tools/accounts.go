@@ -36,8 +36,8 @@ type Deps struct {
 
 // ListAccountsIn is the email_list_accounts input.
 type ListAccountsIn struct {
-	// Account narrows the listing to one account, named by id, nickname or
-	// exact address. Omitted or "all" lists every account.
+	// Account narrows the listing to one account, named by id or exact
+	// address. Omitted or "all" lists every account.
 	Account string `json:"account,omitempty"`
 }
 
@@ -46,10 +46,9 @@ type ListAccountsIn struct {
 type AccountOut struct {
 	AccountID    string                `json:"account_id"`
 	Provider     string                `json:"provider"`
-	Nickname     string                `json:"nickname"`
 	Address      string                `json:"address"`
 	DisplayName  string                `json:"display_name,omitempty"`
-	Groups       []string              `json:"groups"`
+	Groups       []string              `json:"groups,omitempty"`
 	IsDefault    bool                  `json:"is_default"`
 	ColorIndex   int                   `json:"color_index"`
 	ColorName    string                `json:"color_name"`
@@ -57,8 +56,10 @@ type AccountOut struct {
 	LastSyncAt   *time.Time            `json:"last_sync_at,omitempty"`
 	LastError    string                `json:"last_error,omitempty"`
 	SendEnabled  bool                  `json:"send_enabled"`
-	HourlyCap    int                   `json:"hourly_cap"`
-	SentThisHour int                   `json:"sent_this_hour"`
+	// The cap fields appear only while sending is enabled; they mean nothing
+	// otherwise.
+	HourlyCap    *int                  `json:"hourly_cap,omitempty"`
+	SentThisHour *int                  `json:"sent_this_hour,omitempty"`
 	Capabilities provider.Capabilities `json:"capabilities"`
 }
 
@@ -75,13 +76,14 @@ func Register(s *sdk.Server, d Deps) {
 	}
 	mcpkit.AddTool(s, &sdk.Tool{
 		Name: ToolListAccounts,
-		Description: "List the connected email accounts with their nickname, address, status, whether sending is enabled, " +
-			"the hourly send cap and sends this hour, and what the provider supports. " +
-			"Pass account (an id, nickname or exact address) to look at one account.",
+		Description: "List the connected email accounts: address, status, whether sending is enabled and, when it is, " +
+			"the hourly send cap and sends this hour, plus what the provider supports. " +
+			"Sending is off until the owner enables it per account on the moose accounts page. " +
+			"Pass account (an id or exact address) to look at one account.",
 		InputSchema: &jsonschema.Schema{
 			Type: "object",
 			Properties: map[string]*jsonschema.Schema{
-				"account": {Type: "string", Description: "Account id, nickname or exact address. Omit for every account."},
+				"account": {Type: "string", Description: "Account id or exact address. Omit for every account."},
 			},
 		},
 	}, mcpkit.ReadOnly(), func(ctx context.Context, req *sdk.CallToolRequest, in ListAccountsIn) (*sdk.CallToolResult, ListAccountsOut, error) {
@@ -130,12 +132,16 @@ func accountOut(a store.Account, sent int) AccountOut {
 	if groups == nil {
 		groups = []string{}
 	}
-	return AccountOut{
-		AccountID: a.ID, Provider: a.Provider, Nickname: a.Nickname, Address: a.Address, DisplayName: a.DisplayName,
+	out := AccountOut{
+		AccountID: a.ID, Provider: a.Provider, Address: a.Address, DisplayName: a.DisplayName,
 		Groups: groups, IsDefault: a.IsDefault, ColorIndex: a.ColorIndex, ColorName: c.Name, Status: a.Status,
-		LastSyncAt: a.LastSyncAt, LastError: a.LastError, SendEnabled: a.SendEnabled, HourlyCap: a.HourlyCap,
-		SentThisHour: sent, Capabilities: a.Caps,
+		LastSyncAt: a.LastSyncAt, LastError: a.LastError, SendEnabled: a.SendEnabled, Capabilities: a.Caps,
 	}
+	if a.SendEnabled {
+		cap := a.HourlyCap
+		out.HourlyCap, out.SentThisHour = &cap, &sent
+	}
+	return out
 }
 
 // NotFoundError says an account reference matched nothing. Candidates lists

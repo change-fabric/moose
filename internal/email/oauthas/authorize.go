@@ -303,6 +303,8 @@ dl{margin:0;display:grid;grid-template-columns:auto 1fr;gap:.25rem 1rem}dt{color
 a{color:var(--accent)}#status{font-weight:600}
 .btn{display:inline-flex;align-items:center;justify-content:center;min-height:44px;padding:0 1.1rem;border-radius:8px;background:var(--accent);color:var(--accent-ink);font-weight:600;text-decoration:none}
 .here{display:none}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}#paste h2{font-size:1.1rem;margin:0 0 .5rem}#paste textarea{width:100%;min-height:6rem;font:13px/1.4 ui-monospace,monospace;padding:.5rem;border:1px solid var(--field-edge);border-radius:8px;background:var(--field);color:var(--fg);resize:vertical}
+#paste .row{display:flex;gap:.5rem;flex-wrap:wrap;margin-top:.5rem}.btn.quiet{background:transparent;color:var(--accent);border:1px solid var(--line)}
 @media (max-width:40rem),(pointer:coarse){.here{display:block}.here .btn{width:100%}.qr,.scan{display:none}}
 </style></head><body><main>
 <h1>Approve this sign-in with your passkey</h1>
@@ -312,14 +314,29 @@ a{color:var(--accent)}#status{font-weight:600}
 <div class="qr">{{.QR}}</div>
 <p class="scan">On a computer? Scan the code with your phone, or <a href="{{.URL}}" rel="noopener noreferrer" target="_blank">open the approval page</a> on a device that holds your passkey.</p>
 <p id="status" role="status" aria-live="polite">Waiting for approval</p>
+<section id="paste" class="card" hidden><h2>Paste this into Claude Code</h2><p>Copy the sign-in code below and paste it at the <code>URL &gt;</code> prompt. It works once and expires in a few minutes.</p><label for="code" class="sr">Sign-in code</label><textarea id="code" readonly></textarea><div class="row"><button type="button" id="copy" class="btn">Copy sign-in code</button><a id="here" class="btn quiet" href="#">Claude Code is on this computer</a></div></section>
 <noscript><p>This page needs JavaScript to notice the approval. Enable it, then reload.</p></noscript>
 <script nonce="{{.Nonce}}">
 (function(){
   var el=document.getElementById('status');
   function stop(t){el.textContent=t;}
+  function showPaste(u){
+    stop('Approved. One step left.');
+    var box=document.getElementById('paste'),ta=document.getElementById('code'),b=document.getElementById('copy');
+    ta.value=u;document.getElementById('here').href=u;box.hidden=false;
+    document.querySelectorAll('.qr,.scan,.here').forEach(function(n){n.style.display='none';});
+    b.addEventListener('click',function(){
+      function manual(){ta.select();b.textContent='Selected. Copy with Cmd+C or Ctrl+C';}
+      if(navigator.clipboard){navigator.clipboard.writeText(u).then(function(){b.textContent='Copied';},manual);}else{manual();}
+    });
+    ta.addEventListener('focus',function(){ta.select();});b.focus();
+  }
   function tick(){
     fetch('{{.Poll}}',{credentials:'same-origin',cache:'no-store'}).then(function(r){return r.json().catch(function(){return {};});}).then(function(j){
-      if(j.status==='approved'&&j.redirect){stop('Approved. Returning to the application');window.location.replace(j.redirect);return;}
+      if(j.status==='approved'&&j.redirect){
+        var h='';try{h=new URL(j.redirect).hostname;}catch(e){}
+        if(h==='localhost'||h==='127.0.0.1'||h==='[::1]'){showPaste(j.redirect);return;}
+        stop('Approved. Returning to the application');window.location.replace(j.redirect);return;}
       if(j.status==='denied'){stop('The sign-in was denied. You can close this page.');return;}
       if(j.status==='expired'){stop('The approval expired. Start again from the application.');return;}
       if(j.status==='unknown'||j.status==='rejected'||j.status==='error'){stop('This sign-in can no longer complete. Start again from the application.');return;}
