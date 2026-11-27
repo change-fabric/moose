@@ -25,59 +25,43 @@ func css() string {
 	return b.String()
 }
 
-const baseCSS = webui.Tokens + webui.Base + `
-html{font-size:100%}
-body{margin:0;background:var(--bg);color:var(--fg);font:1rem/1.5 system-ui,-apple-system,"Segoe UI",sans-serif}
-main{max-width:46rem;margin:0 auto;padding:1rem}
-h1{font-size:1.4rem;margin:.5rem 0 1rem}
-h2{font-size:1.15rem;margin:1.25rem 0 .5rem}
-.card{background:var(--card);border:1px solid var(--line);border-radius:.5rem;padding:1rem;margin:1rem 0}
-.card>:first-child{margin-top:0}
-.card>:last-child{margin-bottom:0}
-.banner{border-radius:.5rem;overflow:hidden;margin:1rem 0;border:2px solid var(--fg)}
+// baseCSS is the shared webui modules plus what only the approver has: the
+// FROM banner (R7), the look-alike warning and the message body.
+var baseCSS = webui.Tokens + webui.Base + `
+.banner{border-radius:var(--radius);overflow:hidden;margin:1rem 0;border:2px solid var(--fg)}
 .banner .strip{height:.75rem;background-color:var(--fg);color:var(--card)}
 .banner .strip.pat-stripes{background-image:repeating-linear-gradient(45deg,var(--card) 0 .4rem,transparent .4rem .8rem)}
 .banner .strip.pat-dots{background-image:radial-gradient(var(--card) 28%,transparent 30%);background-size:.75rem .75rem}
 .banner .strip.pat-checks{background-image:conic-gradient(var(--card) 25%,transparent 0 50%,var(--card) 0 75%,transparent 0);background-size:1.5rem 1.5rem}
 .banner .strip.pat-none{display:none}
 .banner-body{display:flex;gap:1rem;align-items:center;padding:1rem}
-.monogram{flex:none;width:3.5rem;height:3.5rem;border-radius:50%;border:3px solid currentColor;display:flex;align-items:center;justify-content:center;font-size:1.75rem;font-weight:700}
-.eyebrow{margin:0;font-size:.875rem;text-transform:uppercase;letter-spacing:.06em}
-.nick{margin:0;font-size:clamp(1.4rem,7vw,2rem);line-height:1.15;overflow-wrap:break-word}
-.addr{margin:.25rem 0 0;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:1.1rem;overflow-wrap:anywhere}
+.monogram{flex:none;width:3.5rem;height:3.5rem;border-radius:50%;border:3px solid currentColor;display:flex;align-items:center;justify-content:center;font-size:1.728rem;font-weight:700}
+.eyebrow{margin:0;font-size:.833rem;text-transform:uppercase;letter-spacing:.06em}
+.nick{margin:0;font-size:clamp(1.44rem,7vw,1.728rem);line-height:1.25;overflow-wrap:break-word}
+.addr{margin:.25rem 0 0;font-family:var(--mono);font-size:1rem;overflow-wrap:anywhere}
 .addr .at{padding:0 .25rem;opacity:.85}
 .addr .domain{font-weight:700}
-.addr.lead{font-size:clamp(1.1rem,5.5vw,1.5rem)}
+.addr.lead{font-size:clamp(1.2rem,5.5vw,1.44rem)}
 .dn,.ctx{margin:.25rem 0 0}
-.lookalike{overflow-wrap:anywhere;background:var(--warn-bg);color:var(--warn-fg);border:2px solid var(--warn-fg);border-radius:.5rem;padding:.75rem 1rem;margin:1rem 0}
+.lookalike{overflow-wrap:anywhere;background:var(--warn-bg);color:var(--warn-fg);border:2px solid var(--warn-fg);border-radius:var(--radius);padding:1rem;margin:1rem 0}
 .lookalike p{margin:.25rem 0}
-.lookalike .mono{font-family:ui-monospace,Menlo,Consolas,monospace;overflow-wrap:anywhere}
-mark{background:var(--warn-fg);color:var(--card);padding:0 .1rem;border-radius:.15rem}
-dl{display:grid;grid-template-columns:max-content 1fr;gap:.25rem 1rem;margin:0}
-dt{color:var(--muted)}
-dd{margin:0;overflow-wrap:anywhere}
-pre.body{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px solid var(--line);border-radius:.375rem;padding:.75rem;margin:.5rem 0;font:.95rem/1.45 ui-monospace,Menlo,Consolas,monospace;max-height:28rem;overflow:auto}
-.chip{display:inline-block;border:1px solid var(--warn-fg);color:var(--warn-fg);background:var(--warn-bg);border-radius:1rem;padding:0 .6rem;font-size:.875rem;margin:.1rem .25rem .1rem 0}
-.sha{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.85rem;overflow-wrap:anywhere}
-.actions{display:flex;flex-wrap:wrap;gap:.75rem;margin:1rem 0}
-.actions.confirm{margin-bottom:.5rem}
-.actions.confirm button{width:100%;justify-content:center;min-height:3.25rem;font-size:1.1rem}
-button,.btn{min-height:2.75rem;min-width:2.75rem;padding:.5rem 1.1rem;font:inherit;font-weight:600;border-radius:.4rem;border:2px solid var(--fg);background:var(--card);color:var(--fg);cursor:pointer;text-decoration:none;display:inline-flex;align-items:center}
-button.danger{border-color:var(--bad);color:var(--bad)}
-button[hidden],[hidden]{display:none!important}
-button:disabled{opacity:.55;cursor:not-allowed}
-.note{color:var(--muted)}
+mark{background:var(--warn-fg);color:var(--card);padding:0 .1rem;border-radius:.25rem}
+pre.body{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px solid var(--line);border-radius:var(--radius);padding:1rem;margin:1rem 0 0;font:1rem/1.5 var(--mono);max-height:28rem;overflow:auto}
+.chip{color:var(--warn-fg);background:var(--warn-bg);margin:0 .25rem .25rem 0}
+.sha{font-family:var(--mono);font-size:.833rem;overflow-wrap:anywhere}
+.actions.confirm button{width:100%;min-height:3.5rem;font-size:1.2rem}
 .error{color:var(--bad);font-weight:600}
 .status{min-height:1.5rem}
-label.item{display:flex;gap:.75rem;align-items:flex-start;min-height:2.75rem;padding:.25rem 0}
-label.item input{width:1.5rem;height:1.5rem;flex:none;margin-top:.1rem}
-.group h3{margin:0 0 .5rem;font-size:1.05rem}
-.swatch{display:inline-block;width:1.25rem;height:1.25rem;border-radius:.25rem;vertical-align:middle;margin-right:.4rem;border:1px solid var(--fg)}
+label.item{display:flex;gap:.5rem;align-items:center;min-height:var(--target)}
+label.item input{width:1.5rem;height:1.5rem;flex:none;margin:0}
+.swatch{display:inline-block;width:1.25rem;height:1.25rem;border-radius:.25rem;vertical-align:-.2rem;margin-right:.5rem;border:1px solid var(--fg)}
+.group h2{margin:0 0 .5rem}
+.group h2+.note{margin:-.25rem 0 .5rem}
 ul.plain{list-style:none;margin:0;padding:0}
-ul.plain li{padding:.4rem 0;border-top:1px solid var(--line)}
-a{color:var(--accent)}
-@media (prefers-reduced-motion:no-preference){button{transition:background-color .15s,color .15s}}
-@media (max-width:30rem){.banner-body{flex-direction:column;align-items:flex-start}dl{grid-template-columns:1fr}dt{margin-top:.5rem}}
+ul.plain li{padding:.5rem 0;border-top:1px solid var(--line)}
+ul.plain li .note{display:block}
+.batch-item+.batch-item{border-top:1px solid var(--line);margin-top:1rem;padding-top:1rem}
+@media (max-width:30rem){.banner-body{flex-direction:column;align-items:flex-start}}
 `
 
 // bannerView is the FROM banner of one account.
@@ -150,6 +134,17 @@ func indexOf(i int) int {
 		i = -i
 	}
 	return i % palette.Len()
+}
+
+// count is "1 recipient", "2 recipients"; "address" takes "es".
+func count(n int, noun string) string {
+	if n == 1 {
+		return "1 " + noun
+	}
+	if strings.HasSuffix(noun, "s") {
+		return fmt.Sprintf("%d %ses", n, noun)
+	}
+	return fmt.Sprintf("%d %ss", n, noun)
 }
 
 func since(now, then time.Time) string {
@@ -276,10 +271,10 @@ var pageTmpl = template.Must(template.New("page").Funcs(funcs).Parse(`{{define "
 <dt>Redirects to</dt><dd class="sha">{{.Dashboard.RedirectURIHost}}</dd></dl>
 <p class="note">Approve only if you just started this sign-in.</p></div>{{end}}
 {{if eq .Body "batch"}}<div class="card"><h2>Messages in this batch</h2><p class="note">Untick a message to leave it out. Each message is sent on its own, within the account's hourly limit.</p>
-{{range .Items}}<div class="group"><label class="item"><input type="checkbox" name="drop-item" value="{{.ID}}" checked aria-label="Include this message"><span>Include this message</span></label>{{template "send" .Send}}</div><hr>{{end}}</div>{{end}}
+{{range .Items}}<div class="batch-item"><label class="item"><input type="checkbox" name="drop-item" value="{{.ID}}" checked><span>Include this message</span></label>{{template "send" .Send}}</div>{{end}}</div>{{end}}
 {{if eq .Body "register"}}<div class="card"><p>Create the passkey that approves requests for {{.Account}}. This link works once and expires soon.</p><div class="actions"><button id="register" type="button" class="primary">Create passkey</button></div><p id="status" class="status" role="status" aria-live="polite"></p></div>{{end}}
 {{if eq .Body "login"}}<div class="card"><p>Sign in with your passkey to see pending approvals.</p><div class="actions"><button id="login" type="button" class="primary">Sign in with passkey</button></div><p id="status" class="status" role="status" aria-live="polite"></p></div>{{end}}
-{{if eq .Body "queue"}}{{range .Groups}}<section class="card group" aria-labelledby="g{{.N}}"><h2 id="g{{.N}}">{{if .HasAccount}}<span class="swatch pc{{.Swatch}}" aria-hidden="true"></span>{{end}}{{.Title}}{{if .Address}} <span class="note">{{.Address}} &middot; {{.ColorName}}</span>{{end}}</h2><ul class="plain">{{range .Rows}}<li><a href="{{.URL}}">{{.Label}}</a> <span class="note">{{.Detail}} &middot; {{.Age}}</span></li>{{end}}</ul></section>{{else}}<div class="card"><p>Nothing is waiting for approval.</p></div>{{end}}{{end}}
+{{if eq .Body "queue"}}{{range .Groups}}<section class="card group" aria-labelledby="g{{.N}}"><h2 id="g{{.N}}">{{if .HasAccount}}<span class="swatch pc{{.Swatch}}" aria-hidden="true"></span>{{end}}{{.Title}}</h2>{{if .Address}}<p class="note">{{.Address}} &middot; {{.ColorName}}</p>{{end}}<ul class="plain">{{range .Rows}}<li><a href="{{.URL}}">{{.Label}}</a> <span class="note">{{if .Detail}}{{.Detail}} &middot; {{end}}{{.Age}}</span></li>{{end}}</ul></section>{{else}}<div class="card"><p>Nothing is waiting for approval.</p></div>{{end}}{{end}}
 {{if .Pending}}
 <p class="note">This request expires at {{.Expires}}.</p>
 <p id="status" class="status" role="status" aria-live="polite"></p>

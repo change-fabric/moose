@@ -149,7 +149,7 @@ func TestPageRespectsAccessibilityRules(t *testing.T) {
 	body := h.get("/approve/r/" + id).Body
 	for _, want := range []string{
 		`<html lang="en">`, `<meta name="viewport"`, `<main id="main"`,
-		`min-height:2.75rem;min-width:2.75rem`, // 44px at the default size, in rem so it scales with zoom
+		`--target:2.75rem`, `min-height:var(--target);min-width:var(--target)`, // 44px at the default size, in rem so it scales with zoom
 		`@media (prefers-reduced-motion:no-preference)`,
 		`:focus-visible`,
 		`aria-live="polite"`,

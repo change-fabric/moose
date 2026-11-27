@@ -113,12 +113,14 @@ lambda-sweeper:
 approver-enroll:
 	./scripts/approver-enroll.sh
 
-# Renders every approver page to HTML, then runs axe-core over them (desktop width and
-# 320px) in the pinned browserless Chromium image. Needs Docker.
+# Renders every hosted page (approver, accounts, dashboard sign-in) to HTML, then runs
+# axe-core over them (desktop width and 320px) in the pinned browserless Chromium image.
+# Needs Docker.
 AXE_IMAGE ?= ghcr.io/browserless/chromium:v2.38.1
 a11y-approver:
 	rm -rf dist/axe && mkdir -p dist/axe
 	MOOSE_AXE_DUMP=../../dist/axe $(GO) test -count=1 -run TestDumpPagesForAxe ./internal/approver/
+	MOOSE_AXE_DUMP=../../../dist/axe $(GO) test -count=1 -run TestDumpPagesForAxe ./internal/email/connect/ ./internal/email/oauthas/
 	docker run --rm --entrypoint node -v "$(CURDIR)/dist/axe:/pages:ro" -v "$(CURDIR)/scripts/axe-pages.mjs:/axe-pages.mjs:ro" $(AXE_IMAGE) /axe-pages.mjs /pages
 
 relay-proxy:

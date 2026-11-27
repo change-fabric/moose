@@ -1,0 +1,25 @@
+:root{color-scheme:light dark;
+--ink:#1c1b19;--paper:#f8f6f0;--blue:#0b5cad;--blue-soft:#9cc3f2;--error:#a4261b;
+--bg:color-mix(in srgb,var(--paper) 96%,var(--ink));
+--card:var(--paper);
+--fg:var(--ink);
+--muted:color-mix(in srgb,var(--ink) 74%,var(--paper));
+--line:color-mix(in srgb,var(--ink) 18%,var(--paper));
+--field:color-mix(in srgb,var(--ink) 55%,var(--paper));
+--accent:var(--blue);--accent-ink:var(--paper);
+--ok:var(--blue);--bad:var(--error);
+--warn-fg:var(--error);--warn-bg:color-mix(in srgb,var(--error) 9%,var(--paper));
+--background:var(--card);
+--body-text:var(--fg);--subtle-text:var(--muted);--link-text:var(--accent);--danger-text:var(--bad);--field-edge-ink:var(--field);--warn-bg-text:var(--warn-fg);
+--font:system-ui,-apple-system,"Segoe UI",sans-serif;--mono:ui-monospace,Menlo,Consolas,monospace;
+--radius:.5rem;--target:2.75rem}
+@media (prefers-color-scheme:dark){:root{
+--bg:var(--ink);
+--card:color-mix(in srgb,var(--ink) 90%,var(--paper));
+--fg:var(--paper);
+--muted:color-mix(in srgb,var(--paper) 72%,var(--ink));
+--line:color-mix(in srgb,var(--paper) 20%,var(--ink));
+--field:color-mix(in srgb,var(--paper) 50%,var(--ink));
+--accent:var(--blue-soft);--accent-ink:var(--ink);
+--ok:var(--blue-soft);--bad:color-mix(in srgb,var(--error) 45%,var(--paper));
+--warn-fg:var(--bad);--warn-bg:color-mix(in srgb,var(--error) 22%,var(--ink))}}
