@@ -1,0 +1,11 @@
+{
+  "@odata.context": "https://graph.microsoft.com/v1.0/$metadata#users('me')/mailFolders",
+  "value": [
+    {"id": "AAFolderInbox=", "displayName": "Inbox"},
+    {"id": "AAFolderSent=", "displayName": "Sent Items"},
+    {"id": "AAFolderDrafts=", "displayName": "Drafts"},
+    {"id": "AAFolderDeleted=", "displayName": "Deleted Items"},
+    {"id": "AAFolderJunk=", "displayName": "Junk Email"},
+    {"id": "AAFolderClients=", "displayName": "Clients"}
+  ]
+}

@@ -1,0 +1,27 @@
+{
+  "@odata.context": "https://graph.microsoft.com/v1.0/$metadata#users('me')/messages(id,body)/$entity",
+  "id": "AAMkAGFixtureMessageOne=",
+  "conversationId": "AAQkAGFixtureConversationOne=",
+  "parentFolderId": "AAFolderInbox=",
+  "from": {"emailAddress": {"name": "Bob Example", "address": "bob@example.com"}},
+  "toRecipients": [{"emailAddress": {"name": "Me", "address": "me@example.com"}}],
+  "ccRecipients": [{"emailAddress": {"name": "", "address": "cc@example.com"}}],
+  "subject": "Quarterly plan",
+  "receivedDateTime": "2026-03-04T09:00:00Z",
+  "sentDateTime": "2026-03-04T08:59:58Z",
+  "bodyPreview": "Hello Me, the plan is attached.",
+  "internetMessageId": "<fixture-1@example.com>",
+  "isRead": false,
+  "hasAttachments": true,
+  "body": {"contentType": "html", "content": "<html><body><p>Hello Me, the plan is attached.</p></body></html>"},
+  "internetMessageHeaders": [
+    {"name": "Received", "value": "from example.com by EXCH.example.com"},
+    {"name": "X-MS-Exchange-Organization-SCL", "value": "-1"},
+    {"name": "Thread-Index", "value": "AQHZ3fixture=="},
+    {"name": "References", "value": "<a@example.com>\r\n <b@example.com>"}
+  ],
+  "attachments": [
+    {"@odata.type": "#microsoft.graph.fileAttachment", "id": "AAAttFixture=", "name": "plan.pdf", "contentType": "application/pdf", "size": 1234, "isInline": false},
+    {"@odata.type": "#microsoft.graph.fileAttachment", "id": "AAAttInline=", "name": "", "contentType": "image/png", "size": 10, "isInline": true}
+  ]
+}

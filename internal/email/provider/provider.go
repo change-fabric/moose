@@ -1,7 +1,7 @@
 // Package provider defines the mailbox-provider abstraction moose-email is
 // written against. Tools and the approval flow use only these types, so adding
 // a provider means implementing Provider, not touching the tools. Gmail is the
-// only implementation today; Microsoft Graph is next.
+// full implementation; Microsoft Graph (internal/email/graph) is read-only so far.
 package provider
 
 import (
@@ -29,7 +29,14 @@ var (
 	// ErrRejected means the provider definitely refused the request (an HTTP 4xx
 	// that is not an auth, not-found or rate-limit answer), so nothing was done.
 	ErrRejected = errors.New("provider: request rejected")
+	// ErrUnsupported means the provider does not implement the operation (yet).
+	// Its text carries the stable code CodeUnsupportedForProvider.
+	ErrUnsupported = errors.New("provider: " + CodeUnsupportedForProvider)
 )
+
+// CodeUnsupportedForProvider is the stable code reported when the account's
+// provider does not support the requested operation.
+const CodeUnsupportedForProvider = "unsupported_for_provider"
 
 // RateLimitError is a rate-limit answer that carries the provider's Retry-After
 // hint. It wraps ErrRateLimited, so errors.Is(err, ErrRateLimited) holds and
