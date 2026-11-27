@@ -8,6 +8,7 @@
 locals {
   alarm_functions = {
     email    = module.email.function_name
+    calendar = module.calendar.function_name
     approver = module.approver.function_name
   }
   alarm_tables = {

@@ -135,6 +135,45 @@ registration, not to the secret value.
 If the new secret fails (accounts show `needs_reauth`), put the old value back
 with the same command while it still exists, and try again.
 
+## 1c. Calendar (optional, second connector)
+
+moose-calendar is a second MCP server at `https://<domain_name>/calendar/mcp`,
+its own Lambda (`moose-calendar-<env>`) behind the same API and domain. It uses
+the same accounts as mail. The authorization server and the protected-resource
+metadata for `/calendar/mcp` stay in moose-email, so the calendar function adds
+exactly one route. Calendar stays off (`email.calendar.enabled: false` in
+`deploy/lambda/moose-email.yaml`, which keeps the calendar resource out of the
+authorization server and the Grant calendar button off the connect page) and
+invites stay dry (`email.calendar.invite.live: false`) until the acceptance run
+in `docs/acceptance/calendar.md` shows every step passed. Applying Terraform
+does not turn either on. The owner runs every `terraform apply`; the agent never
+does.
+
+1. **Google.** In the same Google Cloud project as the OAuth client, enable the
+   **Google Calendar API** (APIs and services > Library). On the OAuth consent
+   screen add the scopes `.../auth/calendar.events` and
+   `.../auth/calendar.readonly`. Both are requested per account, only when you
+   press **Grant calendar**, with `include_granted_scopes=true` so mail keeps
+   working. No new client or redirect URI.
+2. **Microsoft.** In the Entra app (section 1b) add the delegated Microsoft
+   Graph permissions `Calendars.ReadWrite` and `Calendars.Read.Shared`. They are
+   requested only at Grant calendar, not at connect. `Calendars.Read.Shared` is
+   used for other people's free/busy on work or school accounts and is not
+   requested for personal Outlook.com accounts, which report their own calendar
+   only. No new redirect URI.
+3. **Build and plan.** `make lambda-calendar` writes `dist/moose-calendar.zip`
+   (`calendar_zip_path`). The plan adds the function, its role (account table,
+   data key, the three secrets, no attachments bucket and no signing key), one
+   API integration and the route `ANY /calendar/mcp`, alarms, a deploy-role
+   entry and the `calendar_mcp_url` output. No function sets reserved
+   concurrency: the account quota is 10 and shared.
+4. **Add the connector.** In Claude add a second custom connector with the URL
+   from `terraform output calendar_mcp_url`. It signs in separately from the
+   email connector; a token for one is refused by the other.
+5. **Grant calendar** per account on the connect page, then use the calendar
+   tools. Events with attendees need a passkey confirmation and the per-account
+   invite switch (`calendar_account_enable_invites`, enabled by passkey).
+
 ## 2. Write the Terraform inputs
 
 From the repo root:
@@ -164,7 +203,7 @@ reserved concurrency, because the Lambda quota is shared across the account.
 ## 3. Build and plan
 
 ```
-make lambda-email lambda-approver lambda-sweeper tf-validate
+make lambda-email lambda-calendar lambda-approver lambda-sweeper tf-validate
 terraform -chdir=deploy/terraform/email init
 terraform -chdir=deploy/terraform/email plan -var-file=env/prod.tfvars -out=tf.plan
 ```

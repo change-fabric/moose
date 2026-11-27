@@ -9,5 +9,6 @@ data "aws_caller_identity" "current" {}
 locals {
   email_name    = "moose-email-${var.env}"
   approver_name = "moose-approver-${var.env}"
+  calendar_name = "moose-calendar-${var.env}"
   origin        = "https://${var.domain_name}"
 }

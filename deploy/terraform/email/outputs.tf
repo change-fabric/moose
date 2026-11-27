@@ -8,6 +8,15 @@ output "mcp_url" {
   value       = "${local.origin}/email/mcp"
 }
 
+output "calendar_mcp_url" {
+  description = "Connector URL for the calendar MCP server (a second connector in Claude, with its own login)."
+  value       = "${local.origin}/calendar/mcp"
+}
+
+output "calendar_function_name" {
+  value = module.calendar.function_name
+}
+
 output "google_redirect_uri" {
   description = "Authorized redirect URI to register on the tenant's Google OAuth client."
   value       = "${local.origin}/connect/google/callback"

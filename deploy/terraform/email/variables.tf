@@ -47,6 +47,12 @@ variable "email_zip_path" {
   default     = "../../../dist/moose-email.zip"
 }
 
+variable "calendar_zip_path" {
+  description = "moose-calendar deployment zip. Build it with `make lambda-calendar`."
+  type        = string
+  default     = "../../../dist/moose-calendar.zip"
+}
+
 variable "approver_zip_path" {
   description = "moose-approver deployment zip. Build it with `make lambda-approver`."
   type        = string
