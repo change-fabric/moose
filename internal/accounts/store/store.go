@@ -247,6 +247,13 @@ type ConnectState struct {
 	Provider string `json:"provider,omitempty"`
 	// ReconnectID names the account being reconnected, if any.
 	ReconnectID string `json:"reconnect_id,omitempty"`
+	// GrantAccountID and Service mark an incremental consent: the attempt adds
+	// Service (ServiceCalendar) to that existing account and never creates or
+	// reconnects one. The attempt is bound to the account, the provider (above)
+	// and the service, and the callback accepts it only when the identity the
+	// provider returns is the account's own.
+	GrantAccountID string `json:"grant_account_id,omitempty"`
+	Service        string `json:"service,omitempty"`
 	// Nickname is the requested nickname for a new account, if any.
 	Nickname string    `json:"nickname,omitempty"`
 	Expires  time.Time `json:"expires"`
@@ -406,6 +413,7 @@ type Store interface {
 	Approvals
 	SendLedger
 	HourlyCap
+	CalendarLedger
 	Contacts
 	DraftMetas
 	Settings

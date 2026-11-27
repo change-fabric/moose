@@ -195,6 +195,32 @@ func TestValidateEmail(t *testing.T) {
 	wantErr(t, load(t, "email: {}\n", nil).ValidateEmail(), "email.provider")
 }
 
+func TestValidateCalendar(t *testing.T) {
+	wantErr(t, load(t, "env: dev\n", nil).ValidateCalendar(), "email: section is required")
+	if load(t, "email: {provider: gmail}\n", nil).Email.Calendar.Enabled {
+		t.Fatal("email.calendar.enabled must default to false")
+	}
+	wantErr(t, load(t, "email: {provider: gmail}\n", nil).ValidateCalendar(), "email.calendar.enabled is false")
+	on := "email: {provider: gmail, calendar: {enabled: true}"
+
+	// Dev without a public origin needs a dev identity.
+	wantErr(t, load(t, on+"}\n", nil).ValidateCalendar(), "dev identity")
+	if err := load(t, on+"}\n", map[string]string{"MOOSE_DEV_IDENTITY": "pat"}).ValidateCalendar(); err != nil {
+		t.Fatalf("dev with a dev identity: %v", err)
+	}
+	if err := load(t, on+", base_url: 'https://moose.example.org'}\n", nil).ValidateCalendar(); err != nil {
+		t.Fatalf("with a public origin: %v", err)
+	}
+	wantErr(t, load(t, on+", base_url: 'https://moose.example.org/x'}\n", nil).ValidateCalendar(), "no path")
+	wantErr(t, load(t, on+", base_url: 'ftp://moose.example.org'}\n", nil).ValidateCalendar(), "http(s) origin")
+	wantErr(t, load(t, "env: prod\n"+on+"}\n", map[string]string{"MOOSE_DYNAMO_TABLE": "t"}).ValidateCalendar(), "email.base_url is required")
+	wantErr(t, load(t, "env: prod\n"+on+", base_url: 'http://moose.example.org'}\n", map[string]string{"MOOSE_DYNAMO_TABLE": "t"}).ValidateCalendar(), "https://")
+	// Both flags are independent: calendar on does not turn Microsoft on.
+	if cfg := load(t, on+"}\n", nil); cfg.Email.MicrosoftEnabled() {
+		t.Error("calendar.enabled turned Microsoft on")
+	}
+}
+
 func TestValidateApprover(t *testing.T) {
 	ok := load(t, "approver: {rp_id: moose.example.org, origin: 'https://moose.example.org'}\n", nil)
 	if err := ok.ValidateApprover(); err != nil {
@@ -241,5 +267,36 @@ func TestShippedConfigsLoad(t *testing.T) {
 				t.Fatalf("gdrive not enabled: %+v", cfg.Drive)
 			}
 		})
+	}
+}
+
+func TestShippedLambdaCalendarFlags(t *testing.T) {
+	prodEnv := map[string]string{"MOOSE_DYNAMO_TABLE": "t", "MOOSE_EMAIL_BASE_URL": "https://moose.example.org"}
+	load := func(path string) Config {
+		t.Helper()
+		e := map[string]string{"MOOSE_CONFIG": path}
+		for k, v := range prodEnv {
+			e[k] = v
+		}
+		cfg, err := Load(env(e))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return cfg
+	}
+	// The email Lambda keeps calendar off in committed config: no calendar token
+	// can be issued and no Grant calendar button shows until acceptance.
+	if load("../../deploy/lambda/moose-email.yaml").Email.Calendar.Enabled {
+		t.Fatal("deploy/lambda/moose-email.yaml turns calendar on; it stays false until docs/acceptance/calendar.md is complete")
+	}
+	// The calendar Lambda's own config serves, and keeps the providers aligned with email's.
+	cal := load("../../deploy/lambda/moose-calendar.yaml")
+	if err := cal.ValidateCalendar(); err != nil {
+		t.Fatalf("deploy/lambda/moose-calendar.yaml: %v", err)
+	}
+	em := load("../../deploy/lambda/moose-email.yaml")
+	if cal.Email.MicrosoftEnabled() != em.Email.MicrosoftEnabled() || strings.Join(cal.Email.ProviderList(), ",") != strings.Join(em.Email.ProviderList(), ",") {
+		t.Errorf("the calendar and email configs disagree on providers: %v/%v vs %v/%v",
+			cal.Email.ProviderList(), cal.Email.MicrosoftEnabled(), em.Email.ProviderList(), em.Email.MicrosoftEnabled())
 	}
 }

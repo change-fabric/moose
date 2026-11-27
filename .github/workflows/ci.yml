@@ -19,6 +19,7 @@ jobs:
         with:
           fetch-depth: 0
           fetch-tags: true
+          persist-credentials: false
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
@@ -28,6 +29,8 @@ jobs:
         run: go vet ./...
       - name: Test
         run: go test ./...
+      - name: Build the calendar Lambda
+        run: make lambda-calendar
       - name: Store conformance (dynamodb-local)
         run: make test-store
       - name: License check
@@ -40,6 +43,8 @@ jobs:
       GO: go
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
@@ -51,6 +56,8 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: 1.15.8

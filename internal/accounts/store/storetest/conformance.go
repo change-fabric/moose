@@ -1406,6 +1406,8 @@ func Run(t *testing.T, newStore func(t *testing.T) store.Store) {
 			t.Fatalf("other owner = %v, %v", none, err)
 		}
 	})
+
+	runCalendar(t, newStore)
 }
 
 func ids(es []store.AuditEvent) []string {

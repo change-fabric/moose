@@ -7,6 +7,9 @@ import (
 	"strings"
 
 	"golang.org/x/oauth2"
+
+	"github.com/change-fabric/moose/internal/accounts/scopes"
+	"github.com/change-fabric/moose/internal/accounts/store"
 )
 
 // Provider names. They are the {provider} segment of the connect routes and
@@ -39,6 +42,13 @@ type Adapter interface {
 	// MissingScopes returns the requested scopes absent from granted. An empty
 	// granted list means the provider did not report scopes.
 	MissingScopes(granted []string, services []string) []string
+	// GrantConfig is the OAuth client for an incremental consent that adds
+	// service (store.ServiceCalendar) to the existing account a. It names the
+	// scopes to ask for; the redirect URI is the provider's usual callback.
+	GrantConfig(service string, a store.Account) (*oauth2.Config, error)
+	// GrantOptions are the authorization request parameters of an incremental
+	// consent, with the account's address as the sign-in hint.
+	GrantOptions(address string) []oauth2.AuthCodeOption
 	// Grant returns the scopes to record for a connect: every non-identity scope
 	// granted, and the subset that is the mail service's. An empty granted list
 	// means the provider did not report scopes and the request is taken as given.
@@ -107,11 +117,14 @@ func (g *GoogleAdapter) Label() string { return "Google" }
 func (g *GoogleAdapter) OAuthConfig([]string) *oauth2.Config { return g.Config }
 
 // AuthOptions implements Adapter: offline access with a forced consent screen,
-// so a refresh token always comes back.
+// so a refresh token always comes back. include_granted_scopes keeps a
+// reconnect's new refresh token covering any service (calendar) the account was
+// granted since, which a mail-only request would otherwise drop.
 func (g *GoogleAdapter) AuthOptions(reconnectAddress string) []oauth2.AuthCodeOption {
 	opts := []oauth2.AuthCodeOption{
 		oauth2.AccessTypeOffline,
 		oauth2.SetAuthURLParam("prompt", "consent"),
+		oauth2.SetAuthURLParam("include_granted_scopes", "true"),
 	}
 	if reconnectAddress != "" {
 		opts = append(opts, oauth2.SetAuthURLParam("login_hint", reconnectAddress))
@@ -147,6 +160,36 @@ func (g *GoogleAdapter) MissingScopes(granted []string, _ []string) []string {
 // already required.
 func (g *GoogleAdapter) Grant([]string) (all, mail []string) {
 	return []string{ScopeReadonly, ScopeCompose}, []string{ScopeReadonly, ScopeCompose}
+}
+
+// GrantConfig implements Adapter: the same web client asking for the service's
+// scopes (calendar.events and calendar.readonly). Google adds them to what the
+// account already granted through include_granted_scopes (GrantOptions), so
+// only the new scopes are named.
+func (g *GoogleAdapter) GrantConfig(service string, _ store.Account) (*oauth2.Config, error) {
+	req := scopes.Required(ProviderGoogle, service, "")
+	if len(req) == 0 {
+		return nil, fmt.Errorf("connect: google has no %q service to grant", service)
+	}
+	c := *g.Config
+	c.Scopes = req
+	return &c, nil
+}
+
+// GrantOptions implements Adapter: incremental consent. include_granted_scopes
+// folds the new scopes into the account's existing grant, offline access with a
+// forced consent screen returns a refresh token, and login_hint steers the
+// sign-in to the account being granted.
+func (g *GoogleAdapter) GrantOptions(address string) []oauth2.AuthCodeOption {
+	opts := []oauth2.AuthCodeOption{
+		oauth2.AccessTypeOffline,
+		oauth2.SetAuthURLParam("prompt", "consent"),
+		oauth2.SetAuthURLParam("include_granted_scopes", "true"),
+	}
+	if address != "" {
+		opts = append(opts, oauth2.SetAuthURLParam("login_hint", address))
+	}
+	return opts
 }
 
 // CallbackError implements Adapter.

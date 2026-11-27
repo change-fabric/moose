@@ -158,6 +158,7 @@ func buildConnect(ctx context.Context, cfg config.Config, log *slog.Logger, load
 	deps := connect.Deps{
 		Store: st, Seal: seal, Adapters: adapters, Auth: auth, Approver: enableAp,
 		BaseURL: e.BaseURL, InsecureCookies: base.Scheme != "https", Log: log,
+		CalendarEnabled: e.Calendar.Enabled,
 	}
 	if google != nil {
 		deps.OAuth, deps.Profile = google, connect.GmailProfile()
@@ -277,7 +278,20 @@ func buildOAuth(e config.Email, key []byte, st store.Store, seal envelope.Sealer
 		Store: st, Seal: seal, Approver: &api.Client{BaseURL: serviceBase(e), Secret: key},
 		ReceiptKey: []byte(e.ReceiptPublicKey), RPID: e.RPID, Owner: e.Owner,
 		BaseURL: e.BaseURL, InsecureCookies: insecure, Log: log,
+		Resources: oauthResources(e),
 	})
+}
+
+// oauthResources lists the resources the authorization server issues tokens
+// for: email always, calendar only while email.calendar.enabled is on. With it
+// off a /authorize request naming the calendar resource is refused
+// (invalid_target) and no calendar token can exist.
+func oauthResources(e config.Email) []oauthas.Resource {
+	rs := []oauthas.Resource{oauthas.EmailResource}
+	if e.Calendar.Enabled {
+		rs = append(rs, oauthas.CalendarResource)
+	}
+	return rs
 }
 
 // serviceBase is where the approval service's API lives: email.approver_url,

@@ -250,3 +250,41 @@ func TestMCPStaysOpenLocallyWithoutOAuth(t *testing.T) {
 	}
 	w.store.Close()
 }
+
+func TestCalendarResourceAndGrantButtonFollowTheFlag(t *testing.T) {
+	// Off by default: only the email resource, and the page offers no calendar.
+	cfg := devConfig(t)
+	if got := oauthResources(*cfg.Email); len(got) != 1 || got[0].Path != "/email/mcp" {
+		t.Fatalf("resources with calendar off = %+v, want email alone", got)
+	}
+	// On: both, email first so a request that names no resource still gets email.
+	on := *cfg.Email
+	on.Calendar.Enabled = true
+	if got := oauthResources(on); len(got) != 2 || got[0].Path != "/email/mcp" || got[1].Path != "/calendar/mcp" {
+		t.Fatalf("resources with calendar on = %+v", got)
+	}
+
+	cfg.DevIdentity = "pat"
+	page := func(enabled bool) string {
+		c := devConfig(t)
+		c.DevIdentity = "pat"
+		c.Email.Calendar.Enabled = enabled
+		w, err := buildConnect(context.Background(), c, quiet, noAWS)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer w.store.Close()
+		srv := httptest.NewServer(w.connect.Handler())
+		defer srv.Close()
+		res, err := http.Get(srv.URL + connect.PagePath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer res.Body.Close()
+		b, _ := io.ReadAll(res.Body)
+		return string(b)
+	}
+	if strings.Contains(page(false), "grant-calendar") || strings.Contains(page(false), "Calendar:") {
+		t.Error("the page mentions calendar while email.calendar.enabled is false")
+	}
+}

@@ -13,6 +13,8 @@ import (
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/microsoft"
 
+	"github.com/change-fabric/moose/internal/accounts/scopes"
+	"github.com/change-fabric/moose/internal/accounts/store"
 	"github.com/change-fabric/moose/internal/email/graph"
 	"github.com/change-fabric/moose/internal/graphapi"
 )
@@ -126,6 +128,34 @@ func (m *MicrosoftAdapter) Grant(granted []string) (all, mail []string) {
 		}
 	}
 	return all, mail
+}
+
+// microsoftBaseScopes ride along on every request so Entra keeps returning a
+// refresh token and an id_token, and /me stays readable.
+var microsoftBaseScopes = []string{ScopeOfflineAccess, "openid", "profile", "email", ScopeUserRead}
+
+// GrantConfig implements Adapter. A Microsoft refresh token covers every scope
+// the user consented to for Graph, but the token a code exchange returns
+// carries the scopes of that request, so the request names the union of the
+// service's scopes and everything the account already holds. Personal accounts
+// are not asked for the shared-calendar scope.
+func (m *MicrosoftAdapter) GrantConfig(service string, a store.Account) (*oauth2.Config, error) {
+	req := scopes.Required(ProviderMicrosoft, service, a.ProviderUID)
+	if len(req) == 0 {
+		return nil, fmt.Errorf("connect: microsoft has no %q service to grant", service)
+	}
+	c := *m.Config
+	c.Scopes = scopes.Union(scopes.Union(a.Scopes, req), microsoftBaseScopes)
+	return &c, nil
+}
+
+// GrantOptions implements Adapter. Entra shows the consent screen for any scope
+// not yet consented, so only the sign-in hint is needed.
+func (m *MicrosoftAdapter) GrantOptions(address string) []oauth2.AuthCodeOption {
+	if address == "" {
+		return nil
+	}
+	return []oauth2.AuthCodeOption{oauth2.SetAuthURLParam("login_hint", address)}
 }
 
 var aadstsCode = regexp.MustCompile(`AADSTS\d{4,7}`)

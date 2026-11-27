@@ -1,27 +1,30 @@
 # Go is never installed on the host: $(GO) defaults to a wrapper that runs the
 # official golang image. CI overrides it with GO=go.
 GO ?= ./scripts/go
-# Each server is tagged on its own line: drive/vX.Y.Z and email/vX.Y.Z. The tag prefix is
-# stripped, so tag drive/v0.2.0 builds as 0.2.0. Untagged builds fall back to the short sha.
+# Each server is tagged on its own line: drive/vX.Y.Z, email/vX.Y.Z and calendar/vX.Y.Z. The tag
+# prefix is stripped, so tag drive/v0.2.0 builds as 0.2.0. Untagged builds fall back to the short sha.
 VERSION_DRIVE ?= $(shell git describe --tags --match 'drive/v*' --always --dirty 2>/dev/null | sed 's|^drive/v||' | grep . || echo dev)
 VERSION_EMAIL ?= $(shell git describe --tags --match 'email/v*' --always --dirty 2>/dev/null | sed 's|^email/v||' | grep . || echo dev)
+VERSION_CALENDAR ?= $(shell git describe --tags --match 'calendar/v*' --always --dirty 2>/dev/null | sed 's|^calendar/v||' | grep . || echo dev)
 # Shared tools (the moose CLI, relay proxy) ride the drive version line.
 VERSION ?= $(VERSION_DRIVE)
 LDFLAGS := -s -w -X main.version=$(VERSION)
 LDFLAGS_DRIVE := -s -w -X main.version=$(VERSION_DRIVE)
 LDFLAGS_EMAIL := -s -w -X main.version=$(VERSION_EMAIL)
+LDFLAGS_CALENDAR := -s -w -X main.version=$(VERSION_CALENDAR)
 # Server binaries get their own version; everything else under cmd/ uses LDFLAGS.
-SERVER_CMDS := moose-drive moose-drive-lambda moose-email moose-email-lambda moose-approver moose-attach-sweeper
+SERVER_CMDS := moose-drive moose-drive-lambda moose-email moose-email-lambda moose-calendar moose-approver moose-attach-sweeper
 OTHER_CMDS := $(filter-out $(addprefix cmd/,$(SERVER_CMDS)),$(wildcard cmd/*))
 GOLANGCI_IMAGE ?= golangci/golangci-lint:v2.15.0
 ALLOWED_LICENSES := MIT,BSD-2-Clause,BSD-3-Clause,Apache-2.0,ISC,MPL-2.0
 
-.PHONY: build test vet lint license-check test-store clean link-secrets up down logs ps lambda-drive lambda-email lambda-approver lambda-sweeper approver-enroll a11y-approver relay-proxy tf-validate tf-plan e2e
+.PHONY: build test vet lint license-check test-store clean link-secrets up down logs ps lambda-drive lambda-email lambda-calendar lambda-approver lambda-sweeper approver-enroll a11y-approver relay-proxy tf-validate tf-plan e2e
 
 build:
 	CGO_ENABLED=0 $(GO) build -trimpath -ldflags "$(LDFLAGS)" -o dist/ $(addprefix ./,$(OTHER_CMDS))
 	CGO_ENABLED=0 $(GO) build -trimpath -ldflags "$(LDFLAGS_DRIVE)" -o dist/ ./cmd/moose-drive ./cmd/moose-drive-lambda
 	@if [ -d cmd/moose-email ]; then CGO_ENABLED=0 $(GO) build -trimpath -ldflags "$(LDFLAGS_EMAIL)" -o dist/ ./cmd/moose-email; fi
+	@if [ -d cmd/moose-calendar ]; then CGO_ENABLED=0 $(GO) build -trimpath -ldflags "$(LDFLAGS_CALENDAR)" -o dist/ ./cmd/moose-calendar; fi
 	@if [ -d cmd/moose-approver ]; then CGO_ENABLED=0 $(GO) build -trimpath -ldflags "$(LDFLAGS_EMAIL)" -o dist/ ./cmd/moose-approver; fi
 	@if [ -d cmd/moose-attach-sweeper ]; then CGO_ENABLED=0 $(GO) build -trimpath -ldflags "$(LDFLAGS_EMAIL)" -o dist/ ./cmd/moose-attach-sweeper; fi
 
@@ -93,6 +96,16 @@ lambda-email:
 	cp deploy/lambda/moose-email.yaml dist/lambda-email/moose.yaml
 	rm -f dist/moose-email.zip
 	cd dist/lambda-email && zip -q -X ../moose-email.zip bootstrap moose.yaml
+
+# moose-calendar serves /calendar/mcp behind the same API Gateway as moose-email, on the
+# calendar/vX.Y.Z tag line. Its config enables calendar (email.calendar.enabled); the
+# moose-email config keeps it off until the calendar acceptance run is recorded.
+lambda-calendar:
+	mkdir -p dist/lambda-calendar
+	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 $(GO) build -trimpath -tags lambda.norpc -ldflags "$(LDFLAGS_CALENDAR)" -o dist/lambda-calendar/bootstrap ./cmd/moose-calendar
+	cp deploy/lambda/moose-calendar.yaml dist/lambda-calendar/moose.yaml
+	rm -f dist/moose-calendar.zip
+	cd dist/lambda-calendar && zip -q -X ../moose-calendar.zip bootstrap moose.yaml
 
 lambda-approver:
 	mkdir -p dist/lambda-approver

@@ -17,8 +17,11 @@
 //     redirect_uri, the PKCE challenge and the resource, and are redeemed with
 //     a conditional write; a second redeem fails and revokes the tokens issued
 //     from the first;
-//   - the resource (RFC 8707) must be https://<domain>/mcp, tokens record it as
-//     their audience, and the bearer verifier rejects any other audience;
+//   - the resource (RFC 8707) must be one of the configured resources (email at
+//     https://<domain>/email/mcp, calendar at https://<domain>/calendar/mcp),
+//     codes, refresh families and tokens are bound to that one resource and
+//     record it as their audience, and the bearer verifier of each resource
+//     rejects any other audience: a token for one resource is dead on the other;
 //   - redirect URIs match exactly, except that http://127.0.0.1 and
 //     http://localhost match on any port (RFC 8252);
 //   - the browser transaction is bound to a secret polling handle held in an
@@ -59,9 +62,31 @@ const (
 	AuthorizePath  = "/authorize"
 	PollPath       = "/authorize/poll"
 	TokenPath      = "/token"
-	// MCPPath is the protected resource. Each moose module serves MCP under
-	// its own prefix on the shared host, so a later module adds /drive/mcp.
+	// MCPPath is the email resource's path, the default resource. Each moose
+	// module serves MCP under its own prefix on the shared host.
 	MCPPath = "/email/mcp"
+	// CalendarMCPPath is the calendar resource's path.
+	CalendarMCPPath = "/calendar/mcp"
+)
+
+// Resource is one protected MCP resource the authorization server issues
+// tokens for. Each resource has its own audience, so a client connects to it
+// with its own login (its own authorization and token exchange) and the token
+// it gets is useless anywhere else.
+type Resource struct {
+	// Path is where the resource serves MCP, such as "/email/mcp".
+	Path string
+	// Name is shown on the consent page and in the metadata ("moose email").
+	Name string
+	// Audience is the canonical resource identifier, https://<domain><Path>. New
+	// fills it in; set it only to override.
+	Audience string
+}
+
+// EmailResource and CalendarResource are the two resources moose serves.
+var (
+	EmailResource    = Resource{Path: MCPPath, Name: "moose email"}
+	CalendarResource = Resource{Path: CalendarMCPPath, Name: "moose calendar"}
 )
 
 // ScopeMCP is the one scope this server issues.
@@ -97,8 +122,11 @@ type Deps struct {
 	// Owner is the single tenant owner every token is issued to.
 	Owner string
 	// BaseURL is the public origin, https://<domain>. It is the issuer, and
-	// BaseURL + /mcp is the one resource tokens are issued for.
+	// BaseURL + each resource's Path is a resource tokens are issued for.
 	BaseURL string
+	// Resources are the protected resources. Empty means the email resource
+	// alone. A /authorize request that names no resource gets the first.
+	Resources []Resource
 	// InsecureCookies drops the Secure cookie flag, for http://localhost in dev.
 	InsecureCookies bool
 	Now             func() time.Time
@@ -107,9 +135,11 @@ type Deps struct {
 
 // Server is the authorization server.
 type Server struct {
-	d        Deps
-	issuer   string
-	resource string
+	d      Deps
+	issuer string
+	// resources are the configured resources with audiences filled in; the
+	// first is the default.
+	resources []Resource
 }
 
 // New validates d and returns the server.
@@ -131,24 +161,83 @@ func New(d Deps) (*Server, error) {
 		d.Log = slog.Default()
 	}
 	issuer := u.Scheme + "://" + u.Host
-	return &Server{d: d, issuer: issuer, resource: issuer + MCPPath}, nil
+	resources, err := resolveResources(issuer, d.Resources)
+	if err != nil {
+		return nil, err
+	}
+	return &Server{d: d, issuer: issuer, resources: resources}, nil
 }
 
-// Resource is the canonical resource identifier, https://<domain>/mcp.
-func (s *Server) Resource() string { return s.resource }
+// resolveResources fills in audiences and validates the list: at least one,
+// paths absolute and unique, audiences unique.
+func resolveResources(issuer string, in []Resource) ([]Resource, error) {
+	if len(in) == 0 {
+		in = []Resource{EmailResource}
+	}
+	out := make([]Resource, 0, len(in))
+	seenPath, seenAud := map[string]bool{}, map[string]bool{}
+	for _, r := range in {
+		if !strings.HasPrefix(r.Path, "/") || strings.HasSuffix(r.Path, "/") || strings.ContainsAny(r.Path, "?#") {
+			return nil, fmt.Errorf("oauthas: resource path %q must start with / and have no trailing slash, query or fragment", r.Path)
+		}
+		if r.Audience == "" {
+			r.Audience = issuer + r.Path
+		}
+		if r.Name == "" {
+			r.Name = "moose"
+		}
+		if seenPath[r.Path] || seenAud[r.Audience] {
+			return nil, fmt.Errorf("oauthas: resource %q is listed twice", r.Path)
+		}
+		seenPath[r.Path], seenAud[r.Audience] = true, true
+		out = append(out, r)
+	}
+	return out, nil
+}
+
+// Resource is the default resource's canonical identifier, the audience of the
+// first configured resource (https://<domain>/email/mcp unless configured).
+func (s *Server) Resource() string { return s.resources[0].Audience }
+
+// Resources lists the configured resources, default first.
+func (s *Server) Resources() []Resource { return append([]Resource(nil), s.resources...) }
+
+// resourceByAudience finds a configured resource by its canonical identifier.
+func (s *Server) resourceByAudience(aud string) (Resource, bool) {
+	for _, r := range s.resources {
+		if r.Audience == aud {
+			return r, true
+		}
+	}
+	return Resource{}, false
+}
+
+// resourceName is the display name for an audience, "moose" for an unknown one.
+func (s *Server) resourceName(aud string) string {
+	if r, ok := s.resourceByAudience(aud); ok {
+		return r.Name
+	}
+	return "moose"
+}
 
 // Handler serves the metadata, registration, authorization and token routes.
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
-	prm := auth.ProtectedResourceMetadataHandler(&oauthex.ProtectedResourceMetadata{
-		Resource:               s.resource,
-		AuthorizationServers:   []string{s.issuer},
-		ScopesSupported:        []string{ScopeMCP},
-		BearerMethodsSupported: []string{"header"},
-		ResourceName:           "moose email",
-	})
-	mux.Handle(PRMetadataPath, prm)
-	mux.Handle(PRMetadataPath+MCPPath, prm)
+	// One RFC 9728 document per resource, mounted at its path-suffixed
+	// location; the bare location answers for the default resource.
+	for i, r := range s.resources {
+		prm := auth.ProtectedResourceMetadataHandler(&oauthex.ProtectedResourceMetadata{
+			Resource:               r.Audience,
+			AuthorizationServers:   []string{s.issuer},
+			ScopesSupported:        []string{ScopeMCP},
+			BearerMethodsSupported: []string{"header"},
+			ResourceName:           r.Name,
+		})
+		if i == 0 {
+			mux.Handle(PRMetadataPath, prm)
+		}
+		mux.Handle(PRMetadataPath+r.Path, prm)
+	}
 	mux.Handle(ASMetadataPath, cors(http.HandlerFunc(s.asMetadata)))
 	mux.Handle(RegisterPath, cors(http.HandlerFunc(s.register)))
 	mux.Handle(TokenPath, cors(http.HandlerFunc(s.token)))
@@ -159,20 +248,61 @@ func (s *Server) Handler() http.Handler {
 	return noStore(mux)
 }
 
-// Protect wraps next, the MCP handler, in auth.RequireBearerToken. A request
-// without a valid access token for this resource gets 401 with a
-// WWW-Authenticate header pointing at the protected resource metadata.
+// Protect wraps next, the default resource's MCP handler, in
+// auth.RequireBearerToken. See ProtectResource.
 func (s *Server) Protect(next http.Handler) http.Handler {
-	return auth.RequireBearerToken(s.verify, &auth.RequireBearerTokenOptions{
-		ResourceMetadataURL: s.issuer + PRMetadataPath + MCPPath,
+	return s.ProtectResource(s.resources[0].Path, next)
+}
+
+// ProtectResource wraps next, the MCP handler of the resource served at path,
+// in auth.RequireBearerToken. A request without a valid access token for that
+// resource gets 401 with a WWW-Authenticate header pointing at the resource's
+// protected resource metadata. It panics if path is not a configured resource,
+// which is a wiring mistake.
+func (s *Server) ProtectResource(path string, next http.Handler) http.Handler {
+	for _, r := range s.resources {
+		if r.Path == path {
+			return NewVerifier(s.d.Store, s.issuer, r, s.d.Now).Protect(next)
+		}
+	}
+	panic("oauthas: ProtectResource: no resource at " + path)
+}
+
+// Verifier checks bearer tokens for one resource. It needs only the store, so
+// a server that is not the authorization server (the calendar Lambda) can
+// protect its own endpoint with the tokens this one issued.
+type Verifier struct {
+	store    store.Store
+	issuer   string
+	resource Resource
+	now      func() time.Time
+}
+
+// NewVerifier returns the verifier for resource, whose audience is
+// issuer + Path unless Audience is set. now may be nil.
+func NewVerifier(st store.Store, issuer string, resource Resource, now func() time.Time) *Verifier {
+	issuer = strings.TrimRight(issuer, "/")
+	if resource.Audience == "" {
+		resource.Audience = issuer + resource.Path
+	}
+	if now == nil {
+		now = time.Now
+	}
+	return &Verifier{store: st, issuer: issuer, resource: resource, now: now}
+}
+
+// Protect wraps next in auth.RequireBearerToken for this resource.
+func (v *Verifier) Protect(next http.Handler) http.Handler {
+	return auth.RequireBearerToken(v.verify, &auth.RequireBearerTokenOptions{
+		ResourceMetadataURL: v.issuer + PRMetadataPath + v.resource.Path,
 		Scopes:              []string{ScopeMCP},
 	})(next)
 }
 
 // verify hashes the opaque bearer token and looks it up. It accepts only a
 // live, unrevoked access token whose audience is exactly this resource.
-func (s *Server) verify(ctx context.Context, token string, _ *http.Request) (*auth.TokenInfo, error) {
-	sess, err := s.d.Store.GetSession(ctx, store.HashSecret(token))
+func (v *Verifier) verify(ctx context.Context, token string, _ *http.Request) (*auth.TokenInfo, error) {
+	sess, err := v.store.GetSession(ctx, store.HashSecret(token))
 	switch {
 	case errors.Is(err, store.ErrNotFound):
 		return nil, fmt.Errorf("%w: unknown token", auth.ErrInvalidToken)
@@ -184,9 +314,9 @@ func (s *Server) verify(ctx context.Context, token string, _ *http.Request) (*au
 		return nil, fmt.Errorf("%w: not an access token", auth.ErrInvalidToken)
 	case sess.Revoked:
 		return nil, fmt.Errorf("%w: revoked", auth.ErrInvalidToken)
-	case !s.d.Now().Before(sess.Expires):
+	case !v.now().Before(sess.Expires):
 		return nil, fmt.Errorf("%w: expired", auth.ErrInvalidToken)
-	case sess.Audience != s.resource:
+	case sess.Audience != v.resource.Audience:
 		return nil, fmt.Errorf("%w: wrong audience", auth.ErrInvalidToken)
 	}
 	return &auth.TokenInfo{

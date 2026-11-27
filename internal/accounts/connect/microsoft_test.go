@@ -119,7 +119,7 @@ func newMSRig(t *testing.T) *msRig {
 		Profile: func(context.Context, oauth2.TokenSource) (connect.Profile, error) {
 			return connect.Profile{}, errors.New("google is not exercised here")
 		},
-		Approver: r.approver, Auth: connect.SessionAuth{Store: r.st},
+		Approver: r.approver, Auth: connect.SessionAuth{Store: r.st}, CalendarEnabled: true,
 	})
 	if err != nil {
 		t.Fatal(err)

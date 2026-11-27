@@ -107,6 +107,8 @@ type Email struct {
 	Providers []string `yaml:"providers"`
 	// Microsoft configures the Microsoft (Entra, Graph) provider.
 	Microsoft EmailMicrosoft `yaml:"microsoft"`
+	// Calendar configures the calendar service that shares this account store.
+	Calendar EmailCalendar `yaml:"calendar"`
 	// BaseURL is the public origin of this deployment (https://moose.example.org).
 	// Setting it turns on the Google connect page, whose OAuth redirect URI is
 	// BaseURL + /connect/google/callback.
@@ -163,6 +165,16 @@ type EmailMicrosoft struct {
 	ClientSecretRef string `yaml:"client_secret_ref"`
 	// ClientSecret is the dev alternative to the secret (MOOSE_MICROSOFT_CLIENT_SECRET).
 	ClientSecret string `yaml:"-"`
+}
+
+// EmailCalendar configures moose-calendar, the second MCP server that serves
+// the accounts moose-email connected. Enabled defaults to false and stays false
+// in the moose-email production config until the calendar acceptance run is
+// recorded: while false the authorization server issues tokens for the email
+// resource only and the connect page does not offer Grant calendar. The
+// moose-calendar binary refuses to serve unless it is true in its own config.
+type EmailCalendar struct {
+	Enabled bool `yaml:"enabled"`
 }
 
 // EmailSend gates live sending. It stays false until an end-to-end approval
@@ -376,6 +388,41 @@ func (c Config) ValidateEmail() error {
 		errs = append(errs, c.validateEmailOAuth()...)
 	} else if c.Env == EnvProd && e.BaseURL != "" {
 		errs = append(errs, errors.New("email.owner, email.rp_id and email.receipt_public_key are required when env is prod: a public /mcp needs the OAuth server"))
+	}
+	return joinErrs(errs)
+}
+
+// ValidateCalendar checks what moose-calendar requires. It shares the email:
+// section (the account store, the public origin the tokens are issued for) and
+// refuses to start unless email.calendar.enabled is true, so a deployment that
+// has not accepted calendar cannot serve it by accident. Without a public
+// origin it serves unauthenticated, which only dev with a dev identity allows.
+func (c Config) ValidateCalendar() error {
+	e := c.Email
+	if e == nil {
+		return errors.New("config: the email: section is required by the calendar server (it shares the account store)")
+	}
+	var errs []error
+	if !e.Calendar.Enabled {
+		errs = append(errs, errors.New("email.calendar.enabled is false: set it to true to serve moose-calendar"))
+	}
+	switch {
+	case e.BaseURL == "" && c.Env == EnvProd:
+		errs = append(errs, errors.New("email.base_url is required when env is prod: it is the issuer and the /calendar/mcp resource"))
+	case e.BaseURL == "":
+		if c.DevIdentity == "" {
+			errs = append(errs, errors.New("set email.base_url, or a dev identity to serve /calendar/mcp without OAuth in dev"))
+		}
+	default:
+		u, err := url.Parse(e.BaseURL)
+		switch {
+		case err != nil || u.Host == "" || (u.Scheme != "https" && u.Scheme != "http"):
+			errs = append(errs, fmt.Errorf("email.base_url %q must be an http(s) origin", e.BaseURL))
+		case u.Path != "" && u.Path != "/" || u.RawQuery != "" || u.Fragment != "":
+			errs = append(errs, fmt.Errorf("email.base_url %q must be an origin with no path", e.BaseURL))
+		case c.Env == EnvProd && u.Scheme != "https":
+			errs = append(errs, fmt.Errorf("email.base_url %q must start with https:// when env is prod", e.BaseURL))
+		}
 	}
 	return joinErrs(errs)
 }
