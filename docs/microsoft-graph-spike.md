@@ -51,6 +51,21 @@ Phase 7 is built ahead of the spike. `send-correlation` is the gate row for it: 
 | `send-rejection-codes` | The error answers to `POST /me/messages/{id}/send` | UNVERIFIED | Only these prove a refusal and so move a send to `failed`: 400 `ErrorInvalidRecipients` and `ErrorInvalidRequest`; 403 `ErrorAccessDenied`, `ErrorSendAsDenied` and `ErrorSubmissionQuotaExceeded`; 413 `ErrorMessageSizeExceeded`; 422 `ErrorQuotaExceeded`. Anything else (transport error, timeout, 429, 401, 404, 5xx, an unlisted 4xx) is `unknown`, never retried. | `provablyRejected` in `internal/email/graph/send.go` |
 | `sent-copy-fields` | `from`, recipients, `subject` and text `body` of the Sent Items copy | UNVERIFIED | The Sent copy's JSON keeps `bccRecipients`, the same addresses and subject, and a text body that equals the approved body once line endings and trailing whitespace are normalised. Display names, charset and transfer encoding are not compared. A difference in any compared field is `sent_mismatch`: terminal, owner alarm, Microsoft kill switch on. | `settle`, `verifySent`, `mailmsg.SemanticDiff` |
 
+## Phase 9 rows (calendar foundation: incremental consent)
+
+Phase 9 needs no gate row: it adds the per-account Grant calendar consent, the
+audience-checked second resource and a scaffold with no calendar data calls. The
+behaviours it assumes about Entra consent are below; they stay UNVERIFIED until the
+spike runs, and calendar stays behind `email.calendar.enabled=false` (and Microsoft
+behind `email.microsoft.enabled=false`).
+
+| Row | Probe | Status | What the code assumes | Where |
+| --- | --- | --- | --- | --- |
+| `incremental-consent-union` | Authorize with `Calendars.ReadWrite Calendars.Read.Shared` plus the account's mail scopes on an account that already consented to mail; inspect the token's `scope` and call both services with it, then refresh | UNVERIFIED | A request that names the union of the new calendar scopes and every scope the account already holds returns a token and refresh token that cover all of them, so the credential written after a grant keeps mail working. Entra shows the consent screen only for the scopes not yet consented, with no `prompt` parameter. | `MicrosoftAdapter.GrantConfig`, `grantCallback` in `internal/accounts/connect/grant.go` |
+| `msa-calendar-shared-scope` | Request `Calendars.Read.Shared` on an outlook.com account | UNVERIFIED | A personal account cannot hold it (or it is meaningless there: free/busy of others is unsupported on personal accounts), so it is not requested and `Calendars.ReadWrite` alone is a complete grant. Personal accounts are recognised by the consumer tenant id `9188040d-6c67-4c5b-b112-36a304b66dad` in `tid.oid`. | `scopes.Required`, `scopes.IsPersonalMicrosoft` |
+| `grant-identity` | `tid.oid` from the id_token of the grant exchange | UNVERIFIED | The incremental-consent id_token carries the same `tid` and `oid` as the connect id_token for the same user, so equality with the stored `ProviderUID` is a reliable "same account" check; a different sign-in is refused and nothing is stored. | `grantCallback` |
+| `google-include-granted-scopes` | Google calendar consent with `include_granted_scopes=true`, `access_type=offline`, `prompt=consent` on an account that granted Gmail scopes | UNVERIFIED (not Microsoft; same spike pass) | The returned `scope` lists the Gmail scopes and the calendar scopes granted, and the new refresh token covers both; a mail reconnect sends `include_granted_scopes=true` too so it does not drop calendar. The Google identity stays the lowercased profile address set in phase 3, not `sub`: moving to `sub` would orphan every existing account. | `GoogleAdapter.GrantConfig`, `GoogleAdapter.AuthOptions` |
+
 ## Rows other phases depend on (not touched here)
 
 | Row | Status | Needed by |

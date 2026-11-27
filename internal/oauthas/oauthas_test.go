@@ -194,7 +194,11 @@ func (w lockedWriter) Write(p []byte) (int, error) {
 	return w.e.log.Write(p)
 }
 
-func newEnv(t *testing.T) *env {
+func newEnv(t *testing.T) *env { return newEnvWith(t, nil) }
+
+// newEnvWith builds the environment with the given resources (nil is the
+// default, email alone) and serves a protected MCP endpoint at each.
+func newEnvWith(t *testing.T, resources []oauthas.Resource) *env {
 	t.Helper()
 	e := &env{t: t, clock: &testClock{}, log: &bytes.Buffer{}}
 	e.clock.ns.Store(time.Now().UnixNano())
@@ -219,7 +223,7 @@ func newEnv(t *testing.T) *env {
 	e.base = e.srv.URL
 	e.as, err = oauthas.New(oauthas.Deps{
 		Store: st, Seal: seal, Approver: e.ap, ReceiptKey: pub, RPID: testRPID, Owner: "pat",
-		BaseURL: e.base, InsecureCookies: true, Now: e.clock.Now,
+		BaseURL: e.base, InsecureCookies: true, Now: e.clock.Now, Resources: resources,
 		Log: slog.New(slog.NewTextHandler(lockedWriter{e}, nil)),
 	})
 	if err != nil {
@@ -228,6 +232,11 @@ func newEnv(t *testing.T) *env {
 	mux := http.NewServeMux()
 	mux.Handle("/", e.as.Handler())
 	mux.Handle(oauthas.MCPPath, e.as.Protect(mcpkit.Handler(mcpkit.NewServer("moose-email", "t", nil))))
+	for _, r := range e.as.Resources() {
+		if r.Path != oauthas.MCPPath {
+			mux.Handle(r.Path, e.as.ProtectResource(r.Path, mcpkit.Handler(mcpkit.NewServer("moose-other", "t", nil))))
+		}
+	}
 	h = mux
 	return e
 }

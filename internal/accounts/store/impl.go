@@ -371,6 +371,7 @@ func (s *impl) DisconnectAccount(ctx context.Context, owner, id string, now time
 		a.RefreshToken = nil
 		a.Version++ // a write-back that read the old credential must not land
 		a.SendEnabled = false
+		a.InviteEnabled = false
 		a.Status = StatusDisconnected
 		a.LastError = ""
 		a.Updated = now.UTC()

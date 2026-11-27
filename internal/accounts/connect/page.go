@@ -12,6 +12,7 @@ import (
 	"google.golang.org/api/option"
 
 	"github.com/change-fabric/moose/internal/accounts/palette"
+	"github.com/change-fabric/moose/internal/accounts/scopes"
 	"github.com/change-fabric/moose/internal/accounts/store"
 	"github.com/change-fabric/moose/internal/email/gmail"
 	"github.com/change-fabric/moose/internal/webui"
@@ -80,6 +81,24 @@ type rowView struct {
 	NeedsReauth, Disconnected    bool
 	CanReconnect, CanEnableSend  bool
 	LastError                    string
+	// CalendarLine says where the calendar grant stands; it is empty when
+	// calendar is not offered. CanGrantCalendar shows the Grant calendar button,
+	// labelled GrantLabel.
+	CalendarLine     string
+	CanGrantCalendar bool
+	GrantLabel       string
+}
+
+// calendarView describes an account's calendar grant for the page.
+func calendarView(a store.Account, usable bool) (line, label string, can bool) {
+	grant, has := a.Services[store.ServiceCalendar]
+	if !has || len(grant.Scopes) == 0 {
+		return "Calendar: not granted", "Grant calendar", usable
+	}
+	if missing := scopes.Missing(accountProvider(a), store.ServiceCalendar, a.ProviderUID, grant.Scopes); len(missing) > 0 {
+		return "Calendar: partly granted, missing " + strings.Join(missing, ", "), "Grant missing calendar access", usable
+	}
+	return "Calendar: granted", "", false
 }
 
 // providerView is one Connect button and its help paragraph.
@@ -105,7 +124,7 @@ var statusLabels = map[string]string{
 
 // rows builds the view rows. Accounts that need reauthorization sort first;
 // the rest keep connect order.
-func rows(accts []store.Account, approverReady bool, reg *Registry) []rowView {
+func rows(accts []store.Account, approverReady, calendarEnabled bool, reg *Registry) []rowView {
 	out := make([]rowView, 0, len(accts))
 	for _, a := range accts {
 		prov := accountProvider(a)
@@ -135,6 +154,10 @@ func rows(accts []store.Account, approverReady bool, reg *Registry) []rowView {
 			CanEnableSend: !a.SendEnabled && a.Status == store.StatusOK && approverReady && !a.Caps.ReadOnly,
 			LastError:     a.LastError,
 		})
+		if calendarEnabled && a.Status != store.StatusDisconnected {
+			rv := &out[len(out)-1]
+			rv.CalendarLine, rv.GrantLabel, rv.CanGrantCalendar = calendarView(a, !off && a.Status == store.StatusOK)
+		}
 		if a.Caps.ReadOnly {
 			out[len(out)-1].ReadOnlyNote = "Read-only: sending is not available for " + providerLabel(reg, prov) + " accounts yet."
 		}
@@ -167,7 +190,7 @@ func (s *Server) page(w http.ResponseWriter, r *http.Request) {
 		csrf = c.Value
 	}
 	http.SetCookie(w, s.cookie(csrfCookie, csrf, 3600, http.SameSiteStrictMode))
-	v := pageView{CSRF: csrf, Rows: rows(accts, s.d.Approver != nil, s.adapters)}
+	v := pageView{CSRF: csrf, Rows: rows(accts, s.d.Approver != nil, s.d.CalendarEnabled, s.adapters)}
 	for _, name := range s.order {
 		if ad, err := s.adapters.Get(name); err == nil {
 			v.Providers = append(v.Providers, providerView{Name: name, Label: ad.Label(), Help: ad.Help()})
@@ -180,10 +203,14 @@ func (s *Server) page(w http.ResponseWriter, r *http.Request) {
 	for key, tmpl := range map[string]string{
 		"connected": "Connected %s. It is read-only until you enable send.", "sendoff": "Send is off for %s.",
 		"disconnected": "Disconnected %s. Its tokens were deleted.",
+		"granted":      "Calendar access granted for %s.",
 	} {
 		if id := q.Get(key); id != "" {
 			if a, ok := findByID(accts, id); ok {
 				v.Notice = strings.Replace(tmpl, "%s", a.Address, 1)
+				if key == "granted" && q.Get("partial") == "1" {
+					v.Notice = "Only part of the calendar access was granted for " + a.Address + ". Use Grant missing calendar access to finish."
+				}
 			}
 		}
 	}
@@ -273,6 +300,7 @@ var pageTmpl = template.Must(template.New("page").Parse(`<!doctype html>
     <span class="meta">{{.LastSync}}</span></div>
    <div class="meta">{{if .IsDefault}}Default · {{end}}{{.ColorName}} · {{if .SendEnabled}}Sending on{{else}}Read-only{{end}}</div>
    {{if .ReadOnlyNote}}<div class="meta">{{.ReadOnlyNote}}</div>{{end}}
+   {{if .CalendarLine}}<div class="meta">{{.CalendarLine}}</div>{{end}}
    {{if .DisplayName}}<div class="meta">{{.DisplayName}}{{if .Groups}} · {{.Groups}}{{end}}</div>{{end}}
    {{if .LastError}}<div class="err">{{.LastError}}</div>{{end}}
   </div>
@@ -282,6 +310,7 @@ var pageTmpl = template.Must(template.New("page").Parse(`<!doctype html>
    {{if .CanReconnect}}<form method="post" action="/connect/{{.Provider}}/start"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="account_id" value="{{.ID}}"><button class="primary" type="submit">Reconnect</button></form>{{end}}
    {{if .SendEnabled}}<form method="post" action="/connect/accounts/{{.ID}}/disable-send"><input type="hidden" name="csrf" value="{{$.CSRF}}"><button type="submit">Turn off sending</button></form>{{end}}
    {{if .CanEnableSend}}<form method="post" action="/connect/accounts/{{.ID}}/enable-send"><input type="hidden" name="csrf" value="{{$.CSRF}}"><button type="submit">Enable sending...</button></form>{{end}}
+   {{if .CanGrantCalendar}}<form method="post" action="/connect/accounts/{{.ID}}/grant-calendar"><input type="hidden" name="csrf" value="{{$.CSRF}}"><button type="submit">{{.GrantLabel}}</button></form>{{end}}
   </div>
   {{if not .Disconnected}}<details class="danger-zone"><summary><span class="closed">Disconnect...</span><span class="opened">Cancel</span></summary>
    <div class="card confirm">

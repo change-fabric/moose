@@ -114,18 +114,35 @@ func (s *Server) authorize(w http.ResponseWriter, r *http.Request) {
 		Name: txnCookie, Value: handle, Path: AuthorizePath, MaxAge: int(TxnTTL / time.Second),
 		HttpOnly: true, Secure: !s.d.InsecureCookies, SameSite: http.SameSiteLaxMode,
 	})
-	s.waitPage(w, client.Name, ru.Host, resp.ApprovalURL, "An application is asking to connect to your moose email.", PollPath)
+	s.waitPage(w, client.Name, ru.Host, resp.ApprovalURL, "An application is asking to connect to your "+s.resourceName(resource)+".", PollPath)
 }
 
-// resourceFrom checks the RFC 8707 resource indicators. Absent means the one
-// resource this server protects; anything else must equal it exactly.
+// resourceFrom checks the RFC 8707 resource indicators. Absent means the
+// default (first) resource; a given one must equal a configured resource
+// exactly, and two different ones are refused: a grant is for one resource.
 func (s *Server) resourceFrom(vals []string) (string, error) {
+	chosen := ""
 	for _, v := range vals {
-		if v != s.resource {
-			return "", fmt.Errorf("resource must be %s", s.resource)
+		if _, ok := s.resourceByAudience(v); !ok {
+			return "", fmt.Errorf("resource must be one of %s", s.resourceList())
 		}
+		if chosen != "" && chosen != v {
+			return "", errors.New("a grant is for one resource; request each resource with its own login")
+		}
+		chosen = v
 	}
-	return s.resource, nil
+	if chosen == "" {
+		chosen = s.resources[0].Audience
+	}
+	return chosen, nil
+}
+
+func (s *Server) resourceList() string {
+	names := make([]string, len(s.resources))
+	for i, r := range s.resources {
+		names[i] = r.Audience
+	}
+	return strings.Join(names, ", ")
 }
 
 func parseScope(raw string) (string, error) {

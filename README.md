@@ -62,12 +62,17 @@ Drive-specific code lives under `internal/drive`; shared packages stay at the to
 | `internal/email/graph` | Microsoft Graph provider, read side only (mailboxes, search, message, thread, attachments); reachable through the Microsoft connect route only when `email.microsoft.enabled` is true (false in prod) and read-only until drafts and send land |
 | `internal/graphapi` | Shared Graph HTTP core: base URL, bearer auth, ImmutableId Prefer header, error and Retry-After mapping |
 | `internal/email/fake` | In-memory provider for tests |
+| `internal/calendar/provider` | Provider-neutral calendar interface and types: events, IANA-zoned times, the constrained recurrence subset, version-conditional writes, `ErrUnsupportedHere`; `providertest` is the read and write conformance suite |
+| `internal/calendar/fake` | In-memory calendar for tests: recurring series with per-occurrence overrides, event versions, create dedupe key, free/busy, RSVP, recorded notifications |
+| `internal/calendar/tools` | The `moose-calendar` tools; so far `calendar_list_accounts` |
+| `cmd/moose-calendar` | The calendar MCP server at `/calendar/mcp` (Lambda or local); it verifies tokens issued by moose-email's authorization server for the calendar audience and shares its account store |
 | `internal/accounts/store` | Email store: accounts, OAuth state, approvals, send ledger, per-account contacts, audit. Business rules once on a small `Backend`; `dynamo` and `sqlite` backends, `storetest` conformance suites |
 | `internal/accounts/envelope` | KMS envelope sealing (encryption context `{owner, account_id}`) with a local dev-key mode |
-| `internal/accounts/connect` | The `/connect/google` page: OAuth web flow through a provider `Adapter` registry (only Google registered), account rows, send enable and disable |
+| `internal/accounts/connect` | The `/connect/google` page: OAuth web flow through a provider `Adapter` registry (Google, and Microsoft when enabled), account rows, send enable and disable, and the per-account Grant calendar incremental consent (bound to the account, provider and service; the returned identity must equal the account's) |
+| `internal/accounts/scopes` | The permissions each service (mail, calendar) needs from each provider, and which of them an account holds |
 | `internal/accounts/accountprov` | Builds a provider client for a stored account: unseals the credential and refreshes tokens |
 | `internal/accounts/fanout` | Account reference resolver (`Resolve`) and the bounded multi-account fan-out with signed paging cursors |
-| `internal/oauthas` | Hand-rolled OAuth 2.1 authorization server for the public `/mcp`: DCR, authorization code with PKCE S256, opaque tokens, rotating refresh. Login is a passkey sign-in on a phone (QR interstitial); `/mcp` sits behind `auth.RequireBearerToken` |
+| `internal/oauthas` | Hand-rolled OAuth 2.1 authorization server for the public MCP resources (`/email/mcp`, and `/calendar/mcp` while `email.calendar.enabled`): DCR, authorization code with PKCE S256, opaque tokens, rotating refresh. Grants and tokens are bound to one resource (RFC 8707) and a token for one is rejected on the other. Login is a passkey sign-in on a phone (QR interstitial); each resource sits behind `auth.RequireBearerToken` (`Verifier` lets another server do the same from the shared store) |
 | `internal/accounts/palette` | The 12 curated account colours (every pair at CIE76 deltaE 20 or more under protan, deutan and tritan) |
 | `internal/htmltext` | HTML to plain text for message bodies |
 | `internal/approver/api` | moose-approver service API: HMAC-signed create (idempotent by key), status, consume; payload and preview types; the client moose-email uses |
@@ -190,11 +195,12 @@ It checks health, auth (including the 401 challenge), sources, search, get, the 
 
 ## Releases and versions
 
-Each server is versioned independently with a prefixed git tag: `drive/vX.Y.Z` for `moose-drive` and `moose-drive-lambda`, `email/vX.Y.Z` for `moose-email`. The Makefile derives `VERSION_DRIVE` and `VERSION_EMAIL` from `git describe --match 'drive/v*'` and `--match 'email/v*'` and strips the prefix, so the tag `drive/v0.2.0` builds as version `0.2.0` (`dist/moose-drive --version`). Untagged commits report the short sha, plus `-dirty` for a modified tree.
+Each server is versioned independently with a prefixed git tag: `drive/vX.Y.Z` for `moose-drive` and `moose-drive-lambda`, `email/vX.Y.Z` for `moose-email`, `calendar/vX.Y.Z` for `moose-calendar`. The Makefile derives `VERSION_DRIVE`, `VERSION_EMAIL` and `VERSION_CALENDAR` from `git describe --match 'drive/v*'`, `--match 'email/v*'` and `--match 'calendar/v*'` and strips the prefix, so the tag `drive/v0.2.0` builds as version `0.2.0` (`dist/moose-drive --version`). Untagged commits report the short sha, plus `-dirty` for a modified tree.
 
 ```sh
 git tag drive/v0.2.0 && git push origin drive/v0.2.0
 git tag email/v0.1.0 && git push origin email/v0.1.0
+git tag calendar/v0.1.0 && git push origin calendar/v0.1.0   # only after docs/acceptance/calendar.md shows every step passed
 ```
 
 CI checks out full history and tags so these versions resolve. Override a version with `make build VERSION_DRIVE=1.2.3`.

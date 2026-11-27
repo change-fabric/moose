@@ -14,6 +14,11 @@ email:
     # acceptance run is recorded. While false, connected Microsoft accounts are hidden from
     # tools (provider_disabled) with their credentials kept, and /connect/microsoft is not found.
     enabled: false
+  calendar:
+    # Stays false until the calendar acceptance run (docs/acceptance/calendar.md) shows every step
+    # passed. While false the authorization server issues tokens for /email/mcp only and the connect
+    # page has no Grant calendar button.
+    enabled: false
   send:
     live: true               # every send still needs a passkey approval and the hourly cap
   # Set by Terraform in the Lambda environment, not here, because they are per tenant:

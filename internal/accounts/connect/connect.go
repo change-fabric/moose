@@ -126,6 +126,8 @@ type Deps struct {
 	Adapters []Adapter
 	Auth     Authenticator
 	Approver Approver // nil leaves Enable send unavailable
+	// CalendarEnabled offers Grant calendar on each account (email.calendar.enabled).
+	CalendarEnabled bool
 	// BaseURL is the public origin, used for origin checks and to confine approval redirects.
 	BaseURL string
 	// InsecureCookies drops the Secure cookie flag, for http://localhost in dev.
@@ -195,6 +197,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET "+Prefix+"{provider}/callback", s.callback)
 	mux.HandleFunc("POST "+Prefix+"accounts/{id}/enable-send", s.enableSend)
 	mux.HandleFunc("POST "+Prefix+"accounts/{id}/disable-send", s.disableSend)
+	mux.HandleFunc("POST "+Prefix+"accounts/{id}/grant-calendar", s.grantCalendar)
 	mux.HandleFunc("POST "+Prefix+"accounts/{id}/disconnect", s.disconnect)
 	return secure(mux)
 }
@@ -370,6 +373,10 @@ func (s *Server) callback(w http.ResponseWriter, r *http.Request) {
 	label := ad.Label()
 	if e := q.Get("error"); e != "" {
 		ec := ad.CallbackError(e, q.Get("error_description"))
+		if st.GrantAccountID != "" && e == "access_denied" {
+			ec = ErrorCopy{Title: label + " calendar access was declined",
+				Message: "The permissions were declined, so nothing changed. Mail still works exactly as before. Use Grant calendar again to retry."}
+		}
 		if ec.Href != "" {
 			s.failWith(w, http.StatusBadRequest, ec.Title, ec.Message, ec.Href, ec.Label)
 			return
@@ -380,6 +387,10 @@ func (s *Server) callback(w http.ResponseWriter, r *http.Request) {
 	code := q.Get("code")
 	if code == "" {
 		s.fail(w, http.StatusBadRequest, "Connect link invalid", label+" returned no authorization code.")
+		return
+	}
+	if st.GrantAccountID != "" {
+		s.grantCallback(w, r, ad, st, owner, code)
 		return
 	}
 	xctx := ctx

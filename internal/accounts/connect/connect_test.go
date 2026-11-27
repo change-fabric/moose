@@ -75,7 +75,10 @@ type rig struct {
 	next      int
 }
 
-func newRig(t *testing.T) *rig {
+func newRig(t *testing.T) *rig { return newRigCalendar(t, true) }
+
+// newRigCalendar is newRig with the calendar service switched on or off.
+func newRigCalendar(t *testing.T, calendar bool) *rig {
 	t.Helper()
 	r := &rig{t: t, codes: map[string]string{}, scope: connect.ScopeReadonly + " " + connect.ScopeCompose}
 	r.google = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
@@ -120,7 +123,7 @@ func newRig(t *testing.T) *rig {
 	cfg.Endpoint = oauth2.Endpoint{AuthURL: "https://accounts.example/auth", TokenURL: r.google.URL + "/token", AuthStyle: oauth2.AuthStyleInParams}
 	srv, err := connect.New(connect.Deps{
 		Store: r.st, Seal: r.seal, OAuth: cfg, BaseURL: r.app.URL, InsecureCookies: true,
-		Approver: r.approver, Auth: connect.SessionAuth{Store: r.st},
+		Approver: r.approver, Auth: connect.SessionAuth{Store: r.st}, CalendarEnabled: calendar,
 		Profile: func(ctx context.Context, ts oauth2.TokenSource) (connect.Profile, error) {
 			tok, err := ts.Token()
 			if err != nil {
