@@ -254,6 +254,35 @@ func (c *Client) CreateEvent(ctx context.Context, calendarID string, in provider
 	return ev, nil
 }
 
+// FindByDedupeKey implements provider.DedupeFinder: it asks for the event whose
+// transactionId is the one CreateEvent set for key. A cancelled event is not
+// found. Whether transactionId can be filtered on is UNVERIFIED (spike row
+// graph-transaction-id).
+func (c *Client) FindByDedupeKey(ctx context.Context, calendarID, key string) (provider.Event, bool, error) {
+	q := url.Values{
+		"$filter": {"transactionId eq '" + transactionIDFor(key) + "'"},
+		"$select": {eventSelect},
+		"$top":    {"2"},
+	}
+	var res struct {
+		Value []eventRes `json:"value"`
+	}
+	if err := c.get(ctx, "/me/calendars/"+graphapi.Segment(calendarID)+"/events", q, zonePrefer(""), &res); err != nil {
+		return provider.Event{}, false, err
+	}
+	for _, r := range res.Value {
+		if r.IsCancelled {
+			continue
+		}
+		ev, err := c.toEvent(calendarID, r, nil, false)
+		if err != nil {
+			return provider.Event{}, false, err
+		}
+		return ev, true, nil
+	}
+	return provider.Event{}, false, nil
+}
+
 func (c *Client) readRaw(ctx context.Context, ref provider.EventRef) (eventRes, error) {
 	var r eventRes
 	q := url.Values{"$select": {eventSelect}}

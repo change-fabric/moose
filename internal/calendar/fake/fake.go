@@ -448,6 +448,24 @@ func (p *Provider) CreateEvent(ctx context.Context, calendarID string, in provid
 	return p.view(rec), nil
 }
 
+// FindByDedupeKey implements provider.DedupeFinder.
+func (p *Provider) FindByDedupeKey(ctx context.Context, calendarID, key string) (provider.Event, bool, error) {
+	if err := p.check(ctx); err != nil {
+		return provider.Event{}, false, err
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	id, ok := p.dedupe[calendarID+"/"+key]
+	if !ok {
+		return provider.Event{}, false, nil
+	}
+	rec, ok := p.events[id]
+	if !ok {
+		return provider.Event{}, false, nil
+	}
+	return p.view(rec), true, nil
+}
+
 func (p *Provider) notify(kind, eventID string, to []string) {
 	if len(to) == 0 {
 		return

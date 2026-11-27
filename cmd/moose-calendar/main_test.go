@@ -175,7 +175,7 @@ func TestCalendarEndpointAcceptsOnlyCalendarTokens(t *testing.T) {
 	}
 	defer cs.Close()
 	list, err := cs.ListTools(ctx, nil)
-	if err != nil || len(list.Tools) != 10 {
+	if err != nil || len(list.Tools) != 12 {
 		t.Fatalf("tools = %+v, %v", list, err)
 	}
 	for _, tl := range list.Tools {

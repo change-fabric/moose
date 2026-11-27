@@ -22,3 +22,9 @@ email:
     # acceptance run (docs/acceptance/calendar.md) shows every step passed, which keeps the
     # calendar resource out of the authorization server and the Grant calendar button off the page.
     enabled: true
+    invite:
+      # Live changes to events with attendees. Every one still needs its own passkey approval and
+      # fits the account's hourly cap, which sends share. Off until docs/acceptance/calendar.md
+      # shows every step passed; while false an approved change ends in would_apply and nothing
+      # reaches the calendar provider.
+      live: false

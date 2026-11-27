@@ -175,6 +175,17 @@ type EmailMicrosoft struct {
 // moose-calendar binary refuses to serve unless it is true in its own config.
 type EmailCalendar struct {
 	Enabled bool `yaml:"enabled"`
+	// Invite gates live changes to events with attendees.
+	Invite EmailCalendarInvite `yaml:"invite"`
+}
+
+// EmailCalendarInvite gates live invites (email.calendar.invite.live). It stays
+// false until the calendar acceptance run is recorded: while false a fully
+// approved create, update or cancel of an event with attendees ends in
+// would_apply and nothing reaches the calendar provider. Every live change still
+// needs its own passkey approval and fits the shared hourly cap.
+type EmailCalendarInvite struct {
+	Live bool `yaml:"live"`
 }
 
 // EmailSend gates live sending. It stays false until an end-to-end approval

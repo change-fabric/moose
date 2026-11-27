@@ -241,6 +241,18 @@ func (s *Server) page(w http.ResponseWriter, r *http.Request) {
 		v.Send.RequestID = req.ID
 	case api.KindAccountSendEnable:
 		v.Title, v.Heading, v.Body = "Enable sending", "Enable sending from this account", "enable"
+	case api.KindCalendarInvite:
+		v.Body, v.Invite = "invite", newInviteView(*parsed.Invite)
+		switch parsed.Invite.Operation {
+		case api.CalOpCreate:
+			v.Title, v.Heading = "Approve invitation", "Approve this invitation"
+		case api.CalOpUpdate:
+			v.Title, v.Heading = "Approve event update", "Approve this event update"
+		default:
+			v.Title, v.Heading = "Approve cancellation", "Approve this cancellation"
+		}
+	case api.KindAccountInviteEnable:
+		v.Title, v.Heading, v.Body = "Enable invitations", "Enable invitations from this account", "inviteenable"
 	case api.KindContactTrustBatch:
 		v.Title, v.Heading, v.Body = "Trust contacts", "Trust these addresses", "trust"
 		v.Trust = parsed.Trust.Changes
@@ -637,6 +649,7 @@ func (s *Server) queueLoginFinish(w http.ResponseWriter, r *http.Request) {
 var kindLabels = map[string]string{
 	api.KindEmailSend: "Email", api.KindAccountSendEnable: "Enable sending", api.KindEmailSendBatch: "Email batch",
 	api.KindContactTrustBatch: "Trust contacts", api.KindDashboardSession: "Dashboard sign-in",
+	api.KindCalendarInvite: "Calendar invitation", api.KindAccountInviteEnable: "Enable invitations",
 }
 
 // queue lists pending approvals grouped by account (R8). It needs a passkey
@@ -687,6 +700,8 @@ func (s *Server) queue(w http.ResponseWriter, r *http.Request) {
 				detail = count(len(p.Trust.Changes), "address")
 			case p.Dashboard != nil:
 				detail = p.Dashboard.ClientName
+			case p.Invite != nil:
+				detail = fmt.Sprintf("%s, %d to be emailed", p.Invite.Operation, len(p.Invite.Recipients))
 			}
 		}
 		g.Rows = append(g.Rows, queueRow{

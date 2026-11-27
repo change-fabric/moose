@@ -142,6 +142,39 @@ func runCalendar(t *testing.T, newStore func(t *testing.T) store.Store) {
 		}
 	})
 
+	t.Run("CalendarFailReleasesTheCapSlotAndRecordsTheReason", func(t *testing.T) {
+		s := newStore(t)
+		must(t, s.ClaimCalendarRequest(ctx, store.CalendarRow{RequestID: "f1", Owner: "pat", AccountID: "acc_f", Operation: "update", Created: now, Version: "v1", ProviderEventID: "ev9", DedupeKey: "dk"}, 1))
+		if err := s.ClaimCalendarRequest(ctx, row("f2", "acc_f", "update", now), 1); !errors.Is(err, store.ErrRateLimited) {
+			t.Fatalf("second claim at cap 1 err = %v", err)
+		}
+		if err := s.FailCalendarRequest(ctx, "f1", store.CalendarDispatching, "stale", now); !errors.Is(err, store.ErrConflict) {
+			t.Fatalf("fail from the wrong state err = %v, want ErrConflict", err)
+		}
+		if n, _ := s.HourlyCount(ctx, "acc_f", now); n != 1 {
+			t.Fatalf("a refused fail moved the counter to %d", n)
+		}
+		must(t, s.FailCalendarRequest(ctx, "f1", store.CalendarClaimed, "stale", now))
+		got, err := s.GetCalendarRequest(ctx, "f1")
+		must(t, err)
+		if got.State != store.CalendarFailed || got.Reason != "stale" || got.Version != "v1" || got.ProviderEventID != "ev9" || got.DedupeKey != "dk" {
+			t.Fatalf("failed row = %+v", got)
+		}
+		if n, _ := s.HourlyCount(ctx, "acc_f", now); n != 0 {
+			t.Fatalf("cap counter after fail = %d, want the slot released", n)
+		}
+		must(t, s.ClaimCalendarRequest(ctx, row("f3", "acc_f", "create", now), 1))
+		if err := s.FailCalendarRequest(ctx, "f1", store.CalendarClaimed, "x", now); !errors.Is(err, store.ErrConflict) {
+			t.Fatalf("second fail of one row err = %v, want ErrConflict, and no second release", err)
+		}
+		if n, _ := s.HourlyCount(ctx, "acc_f", now); n != 1 {
+			t.Fatalf("cap counter = %d, want f3's slot only", n)
+		}
+		if err := s.FailCalendarRequest(ctx, "nope", store.CalendarClaimed, "x", now); !errors.Is(err, store.ErrNotFound) {
+			t.Fatalf("missing row err = %v", err)
+		}
+	})
+
 	t.Run("ConcurrentCalendarClaimsOfOneRequestProduceOneClaim", func(t *testing.T) {
 		s := newStore(t)
 		var wins, dups atomic.Int32

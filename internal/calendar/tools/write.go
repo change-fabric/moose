@@ -17,7 +17,9 @@ import (
 
 	"github.com/change-fabric/moose/internal/accounts/fanout"
 	"github.com/change-fabric/moose/internal/accounts/store"
+	"github.com/change-fabric/moose/internal/approver/api"
 	"github.com/change-fabric/moose/internal/audit"
+	"github.com/change-fabric/moose/internal/calendar/inviteflow"
 	"github.com/change-fabric/moose/internal/calendar/provider"
 	"github.com/change-fabric/moose/internal/mcpkit"
 )
@@ -44,8 +46,10 @@ const (
 
 // WriteGuidance is appended to every write tool's description.
 const WriteGuidance = "Name the account (an id or exact address) or pass a calendar id from calendar_list_calendars; without either you get needs_account. " +
-	"This tool changes an event only when nobody but the account itself is involved: an event with any other attendee, before or after the change, " +
-	"returns invites_not_enabled and nothing is written, because Google and Microsoft both email attendees on any change. " +
+	"This tool applies a change directly only when nobody but the account itself is involved. An event with any other attendee, before or after the change, " +
+	"notifies them (Google and Microsoft both email attendees on any change), so it needs the owner's passkey approval and writes nothing now: " +
+	"on an account whose owner enabled invites (calendar_account_enable_invites) you get needs_approval with an approval_url and the people who will be emailed, then call calendar_invite_status; " +
+	"otherwise it returns invites_not_enabled. Only the organizer can change or cancel such an event (organizer_only otherwise). " +
 	"Every update and delete reads the event first and is conditional on the version it read, so a change made by someone else in between is never overwritten."
 
 func str(desc string) *jsonschema.Schema {
@@ -233,8 +237,9 @@ func (d Deps) writeError(ctx context.Context, err error) *sdk.CallToolResult {
 
 func invitesNotEnabled(ctx context.Context, what string) *sdk.CallToolResult {
 	return mcpkit.ErrorResult(ctx, CodeInvitesNotEnabled,
-		what+" involves someone other than the account itself, so it would notify them. Inviting others is not enabled yet; "+
-			"nothing was written. To decline an invitation use calendar_respond_to_invite.")
+		what+" involves someone other than the account itself, so it would notify them. Inviting others is not enabled for this account "+
+			"(the owner turns it on with calendar_account_enable_invites, approved by passkey); nothing was written. "+
+			"To decline an invitation use calendar_respond_to_invite.")
 }
 
 // involvesOthers reports whether an event, or a proposed attendee list, has
@@ -330,6 +335,9 @@ type WriteOut struct {
 	Event *EventOut `json:"event,omitempty"`
 	// DeletedID is the composite id of the removed event.
 	DeletedID string `json:"deleted_id,omitempty"`
+	// Approval is set when Status is needs_approval: the change involves other
+	// people, nothing was written, and the owner must approve it by passkey.
+	Approval *ApprovalOut `json:"approval,omitempty"`
 }
 
 func (d Deps) registerCreateEvent(s *sdk.Server) {
@@ -388,7 +396,8 @@ func (d Deps) createEvent(ctx context.Context, req *sdk.CallToolRequest, in Crea
 	if err := provider.ValidateEventInput(ev); err != nil {
 		return d.writeError(ctx, err), WriteOut{}, nil
 	}
-	if provider.HasOthers(ev.Attendees, a.Address) {
+	withOthers := provider.HasOthers(ev.Attendees, a.Address)
+	if withOthers && !d.invitesOn(a) {
 		return invitesNotEnabled(ctx, "this event"), WriteOut{}, nil
 	}
 
@@ -412,6 +421,14 @@ func (d Deps) createEvent(ctx context.Context, req *sdk.CallToolRequest, in Crea
 		if calID == "" {
 			return mcpkit.ErrorResult(ctx, "not_found", "the account has no primary calendar; pass a calendar id"), WriteOut{}, nil
 		}
+	}
+
+	if withOthers {
+		// Nothing is written now. The change goes to the owner's passkey approval,
+		// keyed by its exact content, so repeating the call returns the same request;
+		// idempotency_key is for the direct path.
+		res, out := d.requestInvite(ctx, inviteflow.RequestIn{Account: a, Operation: api.CalOpCreate, CalendarID: calID, Event: &ev})
+		return res, out, nil
 	}
 
 	opts := provider.CreateOptions{}
@@ -576,7 +593,11 @@ func (d Deps) updateEvent(ctx context.Context, req *sdk.CallToolRequest, in Upda
 		}
 		// The union of the attendees now and after the change decides it.
 		if pl.involvesOthers(a.Address, proposed) {
-			return invitesNotEnabled(ctx, "this event"), WriteOut{}, nil
+			if !d.invitesOn(a) {
+				return invitesNotEnabled(ctx, "this event"), WriteOut{}, nil
+			}
+			res, out := d.requestInvite(ctx, inviteflow.RequestIn{Account: a, Operation: api.CalOpUpdate, Ref: ref, Scope: scope, Patch: &patch})
+			return res, out, nil
 		}
 		var updated provider.Event
 		err = d.retry429(ctx, func() (e error) { updated, e = p.UpdateEvent(ctx, pl.ref, scope, patch, pl.version); return })
@@ -700,7 +721,11 @@ func (d Deps) deleteEvent(ctx context.Context, req *sdk.CallToolRequest, in Dele
 			return mcpkit.ErrorResult(ctx, "invalid_input", "that id is a repeating series; pass scope series to delete the whole series, or an occurrence's id for one occurrence"), WriteOut{}, nil
 		}
 		if pl.involvesOthers(a.Address, nil) {
-			return invitesNotEnabled(ctx, "deleting this event"), WriteOut{}, nil
+			if !d.invitesOn(a) {
+				return invitesNotEnabled(ctx, "deleting this event"), WriteOut{}, nil
+			}
+			res, out := d.requestInvite(ctx, inviteflow.RequestIn{Account: a, Operation: api.CalOpCancel, Ref: ref, Scope: scope})
+			return res, out, nil
 		}
 		err = d.retry429(ctx, func() error { return p.DeleteEvent(ctx, pl.ref, scope, pl.version) })
 		if errors.Is(err, provider.ErrPreconditionFailed) && attempt == 0 {

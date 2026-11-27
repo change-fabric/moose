@@ -80,6 +80,7 @@ func registerTools(w *wiring, cfg config.Config) func(*sdk.Server) {
 	d := tools.Deps{Store: w.tools, CursorKey: w.cursorKey}
 	if w.providers != nil {
 		d.Providers = w.providers
+		d.Invites = w.invites
 	}
 	if w.protect == nil && cfg.Env == config.EnvDev {
 		d.FallbackOwner = cfg.DevIdentity

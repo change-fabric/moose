@@ -30,15 +30,21 @@ const (
 	KindEmailSendBatch    = estore.KindEmailSendBatch
 	KindContactTrustBatch = estore.KindContactTrustBatch
 	KindDashboardSession  = estore.KindDashboardSession
+
+	KindCalendarInvite      = estore.KindCalendarInvite
+	KindAccountInviteEnable = estore.KindAccountInviteEnable
 )
 
 // MaxBatchItems bounds one batch approval.
 const MaxBatchItems = 25
 
 // FromKinds are the kinds whose page leads with the FROM banner and needs the
-// recorded "Send from this account" tap before an assertion is accepted.
+// recorded "Send from this account" tap before an assertion is accepted. The
+// calendar kinds are in it: the banner names the organizer account, whose
+// address is the one the invitees will see.
 func FromKinds(kind string) bool {
-	return kind == KindEmailSend || kind == KindEmailSendBatch || kind == KindAccountSendEnable
+	return kind == KindEmailSend || kind == KindEmailSendBatch || kind == KindAccountSendEnable ||
+		kind == KindCalendarInvite || kind == KindAccountInviteEnable
 }
 
 // SendKinds are the kinds that send mail and therefore need a ready account.
@@ -148,6 +154,9 @@ type Parsed struct {
 	Trust      *ContactTrustPayload
 	Dashboard  *DashboardSessionPayload
 	Batch      *BatchPayload
+
+	Invite       *CalendarInvitePayload
+	InviteEnable *InviteEnablePayload
 }
 
 var sha256Hex = regexp.MustCompile(`^[0-9a-f]{64}$`)
@@ -261,6 +270,24 @@ func ParsePayload(kind string, raw []byte) (Parsed, error) {
 			seen[it.RequestID] = true
 		}
 		p.Batch, p.Owner, p.AccountID, p.From = v, v.Owner, v.AccountID, v.FromAddress
+	case KindCalendarInvite:
+		v, err := strict[CalendarInvitePayload](canon)
+		if err != nil {
+			return Parsed{}, err
+		}
+		if err := checkInvite(v); err != nil {
+			return Parsed{}, err
+		}
+		p.Invite, p.Owner, p.AccountID, p.From = v, v.Owner, v.AccountID, v.FromAddress
+	case KindAccountInviteEnable:
+		v, err := strict[InviteEnablePayload](canon)
+		if err != nil {
+			return Parsed{}, err
+		}
+		if err := need("owner", v.Owner, "account_id", v.AccountID, "from_address", v.FromAddress); err != nil {
+			return Parsed{}, err
+		}
+		p.InviteEnable, p.Owner, p.AccountID, p.From = v, v.Owner, v.AccountID, v.FromAddress
 	default:
 		return Parsed{}, fmt.Errorf("unknown kind %q", kind)
 	}
@@ -291,6 +318,11 @@ type Preview struct {
 	// (Microsoft Graph), so the guarantee is that the sent content matches the
 	// fields shown, not that the bytes are identical. The approver says so.
 	SemanticMatch bool `json:"semantic_match,omitempty"`
+	// InviteEnabled and CalendarGranted are moose-calendar's view of the account
+	// when it created a calendar-invite request: it is refused unless the
+	// account is ok, has invites on and has granted calendar. Dispatch rechecks.
+	InviteEnabled   *bool `json:"invite_enabled,omitempty"`
+	CalendarGranted *bool `json:"calendar_granted,omitempty"`
 }
 
 // Sibling is another connected account, as much as the look-alike check needs.
