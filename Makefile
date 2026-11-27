@@ -120,7 +120,8 @@ AXE_IMAGE ?= ghcr.io/browserless/chromium:v2.38.1
 a11y-approver:
 	rm -rf dist/axe && mkdir -p dist/axe
 	MOOSE_AXE_DUMP=../../dist/axe $(GO) test -count=1 -run TestDumpPagesForAxe ./internal/approver/
-	MOOSE_AXE_DUMP=../../../dist/axe $(GO) test -count=1 -run TestDumpPagesForAxe ./internal/accounts/connect/ ./internal/oauthas/
+	MOOSE_AXE_DUMP=../../../dist/axe $(GO) test -count=1 -run TestDumpPagesForAxe ./internal/accounts/connect/
+	MOOSE_AXE_DUMP=../../dist/axe $(GO) test -count=1 -run TestDumpPagesForAxe ./internal/oauthas/
 	docker run --rm --entrypoint node -v "$(CURDIR)/dist/axe:/pages:ro" -v "$(CURDIR)/scripts/axe-pages.mjs:/axe-pages.mjs:ro" $(AXE_IMAGE) /axe-pages.mjs /pages
 
 relay-proxy:
