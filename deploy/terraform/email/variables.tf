@@ -108,3 +108,25 @@ variable "api_throttle_burst" {
   type        = number
   default     = 40
 }
+
+variable "microsoft_client_id" {
+  description = "Application (client) id of the Microsoft Entra app registration. Not a secret. Empty until the app is registered; it is passed to moose-email as MOOSE_MICROSOFT_CLIENT_ID."
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = var.microsoft_client_id == "" || can(regex("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$", var.microsoft_client_id))
+    error_message = "microsoft_client_id must be empty or the app registration's GUID."
+  }
+}
+
+variable "microsoft_client_secret_expires_on" {
+  description = "Date the Microsoft client secret expires (YYYY-MM-DD; Entra allows 24 months at most). A one-off reminder goes to the alerts topic 30 days before. Null means no secret yet and no reminder."
+  type        = string
+  default     = null
+
+  validation {
+    condition     = var.microsoft_client_secret_expires_on == null || can(regex("^[0-9]{4}-[0-9]{2}-[0-9]{2}$", coalesce(var.microsoft_client_secret_expires_on, "x")))
+    error_message = "microsoft_client_secret_expires_on must be YYYY-MM-DD or null."
+  }
+}
