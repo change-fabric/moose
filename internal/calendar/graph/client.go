@@ -4,7 +4,9 @@
 // availability on work or school accounts, and recurrence read into the neutral
 // subset or an opaque native rule.
 //
-// Writes arrive in a later phase; until then the write methods refuse.
+// Writes live in write.go: conditional on the event's changeKey (If-Match),
+// with Graph emailing attendees itself and transactionId as the create dedupe
+// key.
 //
 // Everything here is built against documented Graph behaviour and synthetic
 // fixtures. The rows of docs/microsoft-graph-spike.md marked UNVERIFIED list
@@ -87,6 +89,9 @@ func mapErr(err error) error {
 	var ge *graphapi.Error
 	if errors.As(err, &ge) && ge.Status == http.StatusForbidden && !errors.Is(err, provider.ErrAuth) {
 		return fmt.Errorf("%w: %v", provider.ErrAuth, err)
+	}
+	if errors.As(err, &ge) && ge.Status == http.StatusPreconditionFailed {
+		return fmt.Errorf("%w: %v", provider.ErrPreconditionFailed, err)
 	}
 	return err
 }
@@ -799,24 +804,4 @@ func markUnavailable(res *provider.FreeBusyResult, key, reason string) {
 		res.Unavailable = map[string]string{}
 	}
 	res.Unavailable[key] = reason
-}
-
-// ---- writes (a later phase) ----
-
-var errWritesLater = errors.New("graph calendar: writes are not implemented yet")
-
-func (c *Client) CreateEvent(context.Context, string, provider.EventInput, provider.CreateOptions) (provider.Event, error) {
-	return provider.Event{}, errWritesLater
-}
-
-func (c *Client) UpdateEvent(context.Context, provider.EventRef, provider.Scope, provider.EventPatch, string) (provider.Event, error) {
-	return provider.Event{}, errWritesLater
-}
-
-func (c *Client) DeleteEvent(context.Context, provider.EventRef, provider.Scope, string) error {
-	return errWritesLater
-}
-
-func (c *Client) Respond(context.Context, provider.EventRef, provider.Response, string) error {
-	return errWritesLater
 }

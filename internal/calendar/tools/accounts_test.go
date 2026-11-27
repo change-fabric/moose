@@ -195,7 +195,7 @@ func TestListAccountsWithoutAnOwnerIsUnauthorized(t *testing.T) {
 	}
 }
 
-func TestServerCarriesInstructionsAndEveryToolIsReadOnly(t *testing.T) {
+func TestServerCarriesInstructionsAndOnlyTheWriteToolsAreNotReadOnly(t *testing.T) {
 	cs := connect(t, tools.Deps{Store: seed(t), FallbackOwner: "pat"})
 	if init := cs.InitializeResult(); init == nil || !strings.Contains(init.Instructions, "address") || !strings.Contains(init.Instructions, "not_granted") {
 		t.Errorf("instructions = %+v", init)
@@ -205,18 +205,25 @@ func TestServerCarriesInstructionsAndEveryToolIsReadOnly(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := []string{
-		"calendar_find_meeting_times", "calendar_free_busy", "calendar_get_event",
-		"calendar_list_accounts", "calendar_list_calendars", "calendar_list_events",
+		"calendar_create_event", "calendar_delete_event", "calendar_find_meeting_times", "calendar_free_busy", "calendar_get_event",
+		"calendar_list_accounts", "calendar_list_calendars", "calendar_list_events", "calendar_respond_to_invite", "calendar_update_event",
+	}
+	writes := map[string]bool{
+		"calendar_create_event": true, "calendar_update_event": true, "calendar_delete_event": true, "calendar_respond_to_invite": true,
 	}
 	var got []string
 	for _, tl := range list.Tools {
 		got = append(got, tl.Name)
-		if a := tl.Annotations; a == nil || !a.ReadOnlyHint {
-			t.Errorf("%s annotations = %+v, want read-only", tl.Name, a)
+		a := tl.Annotations
+		if a == nil || a.ReadOnlyHint == writes[tl.Name] {
+			t.Errorf("%s annotations = %+v, want read-only exactly for the read tools", tl.Name, a)
+		}
+		if tl.Name == "calendar_delete_event" && (a == nil || a.DestructiveHint == nil || !*a.DestructiveHint) {
+			t.Errorf("delete is not marked destructive: %+v", a)
 		}
 	}
 	sort.Strings(got)
 	if strings.Join(got, ",") != strings.Join(want, ",") {
-		t.Fatalf("tools = %v, want exactly the read tools %v (no write tool yet)", got, want)
+		t.Fatalf("tools = %v, want exactly %v", got, want)
 	}
 }

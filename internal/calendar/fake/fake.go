@@ -394,35 +394,6 @@ func (p *Provider) writable(calendarID string) error {
 	return nil
 }
 
-func validateInput(in provider.EventInput) error {
-	if err := in.Start.Validate(); err != nil {
-		return err
-	}
-	if err := in.End.Validate(); err != nil {
-		return err
-	}
-	if in.Start.IsAllDay() != in.End.IsAllDay() {
-		return fmt.Errorf("%w: start and end must both be dates or both be instants", provider.ErrInvalidTime)
-	}
-	if !in.Start.Before(in.End) {
-		return fmt.Errorf("%w: the end must be after the start", provider.ErrInvalidTime)
-	}
-	if in.Recurrence != nil {
-		if err := in.Recurrence.Validate(); err != nil {
-			return err
-		}
-	}
-	for _, a := range in.Attendees {
-		if strings.TrimSpace(a.Email) == "" || !strings.Contains(a.Email, "@") {
-			return fmt.Errorf("%w: attendee %q has no usable address", provider.ErrRejected, a.Email)
-		}
-	}
-	if in.ReminderMinutes != nil && (*in.ReminderMinutes < 0 || *in.ReminderMinutes > 40320) {
-		return fmt.Errorf("%w: reminder_minutes must be between 0 and 40320", provider.ErrRejected)
-	}
-	return nil
-}
-
 // CreateEvent implements provider.Provider.
 func (p *Provider) CreateEvent(ctx context.Context, calendarID string, in provider.EventInput, opts provider.CreateOptions) (provider.Event, error) {
 	if err := p.check(ctx); err != nil {
@@ -438,7 +409,7 @@ func (p *Provider) CreateEvent(ctx context.Context, calendarID string, in provid
 			return p.view(p.events[id]), nil
 		}
 	}
-	if err := validateInput(in); err != nil {
+	if err := provider.ValidateEventInput(in); err != nil {
 		return provider.Event{}, err
 	}
 	if in.Video && !p.caps.Video {
@@ -584,7 +555,7 @@ func applyPatch(ev *provider.Event, patch provider.EventPatch, self string) erro
 	if patch.End != nil {
 		next.End = *patch.End
 	}
-	if err := validateInput(provider.EventInput{Start: next.Start, End: next.End, Recurrence: nil, Attendees: attendeesOf(patch, next)}); err != nil {
+	if err := provider.ValidateEventInput(provider.EventInput{Start: next.Start, End: next.End, Recurrence: nil, Attendees: attendeesOf(patch, next)}); err != nil {
 		return err
 	}
 	switch {

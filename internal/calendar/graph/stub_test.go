@@ -39,6 +39,10 @@ type stub struct {
 	// deny makes the calendar endpoints answer 403 ErrorAccessDenied, as Graph
 	// does when the app holds no calendar consent.
 	deny bool
+	// comments are the comments RSVP actions carried.
+	comments []string
+	// reject400 makes create answer 400, as Graph does for a body it cannot use.
+	reject400 bool
 }
 
 func (s *stub) denied(w http.ResponseWriter) bool {
@@ -57,6 +61,11 @@ func newStub(t *testing.T) *stub {
 	mux.HandleFunc("GET /me/calendars/{cal}/calendarView", s.calendarView)
 	mux.HandleFunc("GET /me/calendars/{cal}/events/{id}", s.event)
 	mux.HandleFunc("POST /me/calendar/getSchedule", s.getSchedule)
+	mux.HandleFunc("POST /me/calendars/{cal}/events", s.create)
+	mux.HandleFunc("PATCH /me/calendars/{cal}/events/{id}", s.patch)
+	mux.HandleFunc("DELETE /me/calendars/{cal}/events/{id}", s.remove)
+	mux.HandleFunc("POST /me/calendars/{cal}/events/{id}/cancel", s.cancel)
+	mux.HandleFunc("POST /me/calendars/{cal}/events/{id}/{action}", s.respond)
 	s.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Prefer") == "" || !strings.Contains(r.Header.Get("Prefer"), `IdType="ImmutableId"`) {
 			t.Errorf("request %s %s lacks the ImmutableId Prefer header: %q", r.Method, r.URL.Path, r.Header.Get("Prefer"))
@@ -81,6 +90,10 @@ func (s *stub) fail(w http.ResponseWriter, err error) {
 	case errors.As(err, &rl):
 		status, code = http.StatusTooManyRequests, "TooManyRequests"
 		w.Header().Set("Retry-After", strconv.Itoa(int(rl.RetryAfter.Seconds())))
+	case errors.Is(err, provider.ErrPreconditionFailed):
+		status, code = http.StatusPreconditionFailed, "ErrorIrresolvableConflict"
+	case errors.Is(err, provider.ErrRejected), errors.Is(err, provider.ErrUnsupportedHere), errors.Is(err, provider.ErrInvalidTime), errors.Is(err, provider.ErrInvalidRecurrence):
+		status, code = http.StatusConflict, "ErrorInvalidRequest"
 	case errors.Is(err, provider.ErrAuth):
 		status, code = http.StatusUnauthorized, "InvalidAuthenticationToken"
 	case errors.Is(err, provider.ErrNotFound):
@@ -355,7 +368,13 @@ func (s seeder) Fail(t *testing.T, f providertest.Failure) {
 		s.p.Err = &provider.RateLimitError{RetryAfter: providertest.RetryAfter}
 	}
 }
-func (s seeder) Notified(t *testing.T) []providertest.Notification { return nil }
+func (s seeder) Notified(t *testing.T) []providertest.Notification {
+	var out []providertest.Notification
+	for _, n := range s.p.Notifications() {
+		out = append(out, providertest.Notification{Kind: n.Kind, To: n.To})
+	}
+	return out
+}
 
 func factory(personal bool) providertest.Factory {
 	return func(t *testing.T) (provider.Provider, providertest.Seeder) {
@@ -368,4 +387,323 @@ func factory(personal bool) providertest.Factory {
 
 func TestConformanceReadWorkOrSchool(t *testing.T) { providertest.RunRead(t, factory(false)) }
 
+func TestConformanceWriteWorkOrSchool(t *testing.T) { providertest.RunWrite(t, factory(false)) }
+
+func TestConformanceWritePersonal(t *testing.T) { providertest.RunWrite(t, factory(true)) }
+
 func TestConformanceReadPersonal(t *testing.T) { providertest.RunRead(t, factory(true)) }
+
+// ---- writes ----
+
+type wireDT struct {
+	DateTime string `json:"dateTime"`
+	TimeZone string `json:"timeZone"`
+}
+
+func (w wireDT) toTime(allDay bool) (provider.EventTime, error) {
+	loc, err := time.LoadLocation(w.TimeZone)
+	if err != nil {
+		return provider.EventTime{}, err
+	}
+	t, err := time.ParseInLocation(graphLayout, w.DateTime, loc)
+	if err != nil {
+		return provider.EventTime{}, err
+	}
+	if allDay {
+		return provider.EventTime{Date: t.Format(provider.DateLayout)}, nil
+	}
+	return provider.EventTime{DateTime: t, Zone: w.TimeZone}, nil
+}
+
+type wireAtt struct {
+	Type         string `json:"type"`
+	EmailAddress struct {
+		Name    string `json:"name"`
+		Address string `json:"address"`
+	} `json:"emailAddress"`
+}
+
+func (a wireAtt) toAttendee() provider.Attendee {
+	return provider.Attendee{Email: a.EmailAddress.Address, Name: a.EmailAddress.Name, Optional: a.Type == "optional"}
+}
+
+var dayCodes = map[string]string{"monday": "MO", "tuesday": "TU", "wednesday": "WE", "thursday": "TH", "friday": "FR", "saturday": "SA", "sunday": "SU"}
+
+// neutralOf reads the patternedRecurrence a client wrote back into the neutral
+// subset, as Graph would store it.
+func neutralOf(raw json.RawMessage) (*provider.Recurrence, error) {
+	var p struct {
+		Pattern struct {
+			Type       string   `json:"type"`
+			Interval   int      `json:"interval"`
+			DaysOfWeek []string `json:"daysOfWeek"`
+		} `json:"pattern"`
+		Range struct {
+			Type      string `json:"type"`
+			EndDate   string `json:"endDate"`
+			Number    int    `json:"numberOfOccurrences"`
+			StartDate string `json:"startDate"`
+		} `json:"range"`
+	}
+	if err := json.Unmarshal(raw, &p); err != nil {
+		return nil, err
+	}
+	r := provider.Recurrence{}
+	if p.Pattern.Interval > 1 {
+		r.Interval = p.Pattern.Interval
+	}
+	switch p.Pattern.Type {
+	case "daily":
+		r.Freq = provider.FreqDaily
+	case "weekly":
+		r.Freq = provider.FreqWeekly
+		for _, d := range p.Pattern.DaysOfWeek {
+			r.ByDay = append(r.ByDay, dayCodes[d])
+		}
+	case "absoluteMonthly":
+		r.Freq = provider.FreqMonthly
+	case "absoluteYearly":
+		r.Freq = provider.FreqYearly
+	default:
+		return nil, fmt.Errorf("pattern %q", p.Pattern.Type)
+	}
+	switch p.Range.Type {
+	case "endDate":
+		r.Until = p.Range.EndDate
+	case "numbered":
+		r.Count = p.Range.Number
+	}
+	if p.Range.StartDate == "" {
+		return nil, errors.New("range has no startDate")
+	}
+	return &r, nil
+}
+
+func (s *stub) ifMatch(r *http.Request) string {
+	v := strings.TrimSpace(r.Header.Get("If-Match"))
+	v = strings.TrimPrefix(v, "W/")
+	return strings.TrimPrefix(strings.Trim(v, `"`), "ck-")
+}
+
+func (s *stub) scopeOf(r *http.Request) (provider.EventRef, provider.Scope, error) {
+	ref := provider.EventRef{CalendarID: r.PathValue("cal"), EventID: r.PathValue("id")}
+	ev, err := s.p.GetEvent(r.Context(), ref)
+	if err != nil {
+		return ref, "", err
+	}
+	if ev.SeriesID != "" && ev.ID != ev.SeriesID {
+		return ref, provider.ScopeInstance, nil
+	}
+	return ref, provider.ScopeSeries, nil
+}
+
+func (s *stub) create(w http.ResponseWriter, r *http.Request) {
+	if s.denied(w) {
+		return
+	}
+	if s.reject400 {
+		s.fail(w, fmt.Errorf("%w: the request body is not valid", provider.ErrInvalidQuery))
+		return
+	}
+	var body struct {
+		Subject    string `json:"subject"`
+		Body       *struct{ Content string }
+		Location   *struct{ DisplayName string }
+		Start      wireDT          `json:"start"`
+		End        wireDT          `json:"end"`
+		IsAllDay   bool            `json:"isAllDay"`
+		Attendees  []wireAtt       `json:"attendees"`
+		Recurrence json.RawMessage `json:"recurrence"`
+		Reminder   bool            `json:"isReminderOn"`
+		Minutes    int             `json:"reminderMinutesBeforeStart"`
+		Online     bool            `json:"isOnlineMeeting"`
+		Provider   string          `json:"onlineMeetingProvider"`
+		TxID       string          `json:"transactionId"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		s.fail(w, fmt.Errorf("%w: %v", provider.ErrInvalidQuery, err))
+		return
+	}
+	st, err1 := body.Start.toTime(body.IsAllDay)
+	en, err2 := body.End.toTime(body.IsAllDay)
+	if err1 != nil || err2 != nil {
+		s.fail(w, fmt.Errorf("%w: bad time", provider.ErrInvalidQuery))
+		return
+	}
+	if body.Online && body.Provider != "teamsForBusiness" {
+		s.t.Errorf("an online meeting must ask for teamsForBusiness, got %q", body.Provider)
+	}
+	in := provider.EventInput{Title: body.Subject, Start: st, End: en, Video: body.Online}
+	if body.Body != nil {
+		in.Description = body.Body.Content
+	}
+	if body.Location != nil {
+		in.Location = body.Location.DisplayName
+	}
+	if len(body.Recurrence) > 0 && string(body.Recurrence) != "null" {
+		rec, err := neutralOf(body.Recurrence)
+		if err != nil {
+			s.fail(w, fmt.Errorf("%w: %v", provider.ErrInvalidQuery, err))
+			return
+		}
+		in.Recurrence = rec
+	}
+	for _, a := range body.Attendees {
+		in.Attendees = append(in.Attendees, a.toAttendee())
+	}
+	if body.Reminder {
+		m := body.Minutes
+		in.ReminderMinutes = &m
+	}
+	ev, err := s.p.CreateEvent(r.Context(), r.PathValue("cal"), in, provider.CreateOptions{DedupeKey: body.TxID})
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusCreated)
+	_ = json.NewEncoder(w).Encode(gEvent(ev, zoneFromPrefer(r.Header.Get("Prefer"))))
+}
+
+func (s *stub) patch(w http.ResponseWriter, r *http.Request) {
+	if s.denied(w) {
+		return
+	}
+	raw := map[string]json.RawMessage{}
+	if err := json.NewDecoder(r.Body).Decode(&raw); err != nil {
+		s.fail(w, fmt.Errorf("%w: %v", provider.ErrInvalidQuery, err))
+		return
+	}
+	ref, scope, err := s.scopeOf(r)
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
+	var patch provider.EventPatch
+	str := func(key string) *string {
+		v, ok := raw[key]
+		if !ok {
+			return nil
+		}
+		var x string
+		_ = json.Unmarshal(v, &x)
+		return &x
+	}
+	patch.Title = str("subject")
+	if v, ok := raw["body"]; ok {
+		var b struct{ Content string }
+		_ = json.Unmarshal(v, &b)
+		patch.Description = &b.Content
+	}
+	if v, ok := raw["location"]; ok {
+		var l struct{ DisplayName string }
+		_ = json.Unmarshal(v, &l)
+		patch.Location = &l.DisplayName
+	}
+	allDay := false
+	if v, ok := raw["isAllDay"]; ok {
+		_ = json.Unmarshal(v, &allDay)
+	}
+	for key, dst := range map[string]**provider.EventTime{"start": &patch.Start, "end": &patch.End} {
+		if v, ok := raw[key]; ok {
+			var d wireDT
+			_ = json.Unmarshal(v, &d)
+			t, err := d.toTime(allDay)
+			if err != nil {
+				s.fail(w, fmt.Errorf("%w: bad time", provider.ErrInvalidQuery))
+				return
+			}
+			*dst = &t
+		}
+	}
+	if v, ok := raw["recurrence"]; ok {
+		if string(v) == "null" {
+			patch.ClearRecurrence = true
+		} else {
+			rec, err := neutralOf(v)
+			if err != nil {
+				s.fail(w, fmt.Errorf("%w: %v", provider.ErrInvalidQuery, err))
+				return
+			}
+			patch.Recurrence = rec
+		}
+	}
+	if v, ok := raw["attendees"]; ok {
+		var list []wireAtt
+		_ = json.Unmarshal(v, &list)
+		out := []provider.Attendee{}
+		for _, a := range list {
+			out = append(out, a.toAttendee())
+		}
+		patch.Attendees = &out
+	}
+	if v, ok := raw["isOnlineMeeting"]; ok {
+		var on bool
+		_ = json.Unmarshal(v, &on)
+		patch.Video = &on
+	}
+	if v, ok := raw["reminderMinutesBeforeStart"]; ok {
+		var m int
+		_ = json.Unmarshal(v, &m)
+		patch.ReminderMinutes = &m
+	}
+	ev, err := s.p.UpdateEvent(r.Context(), ref, scope, patch, s.ifMatch(r))
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
+	_ = json.NewEncoder(w).Encode(gEvent(ev, zoneFromPrefer(r.Header.Get("Prefer"))))
+}
+
+func (s *stub) remove(w http.ResponseWriter, r *http.Request) {
+	if s.denied(w) {
+		return
+	}
+	ref, scope, err := s.scopeOf(r)
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
+	if err := s.p.DeleteEvent(r.Context(), ref, scope, s.ifMatch(r)); err != nil {
+		s.fail(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *stub) cancel(w http.ResponseWriter, r *http.Request) {
+	if s.denied(w) {
+		return
+	}
+	ref, scope, err := s.scopeOf(r)
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
+	if err := s.p.DeleteEvent(r.Context(), ref, scope, s.ifMatch(r)); err != nil {
+		s.fail(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusAccepted)
+}
+
+func (s *stub) respond(w http.ResponseWriter, r *http.Request) {
+	if s.denied(w) {
+		return
+	}
+	var body struct {
+		Comment      string `json:"comment"`
+		SendResponse bool   `json:"sendResponse"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&body)
+	if !body.SendResponse {
+		s.t.Errorf("an RSVP must send the response to the organizer")
+	}
+	resp := map[string]provider.Response{"accept": provider.RespondAccept, "tentativelyAccept": provider.RespondTentative, "decline": provider.RespondDecline}[r.PathValue("action")]
+	ref := provider.EventRef{CalendarID: r.PathValue("cal"), EventID: r.PathValue("id")}
+	if err := s.p.Respond(r.Context(), ref, resp, body.Comment); err != nil {
+		s.fail(w, err)
+		return
+	}
+	s.comments = append(s.comments, body.Comment)
+	w.WriteHeader(http.StatusAccepted)
+}
