@@ -16,10 +16,11 @@ import (
 
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/change-fabric/moose/internal/accounts/fanout"
+	"github.com/change-fabric/moose/internal/accounts/store"
+	"github.com/change-fabric/moose/internal/accounts/store/sqlite"
 	"github.com/change-fabric/moose/internal/email/fake"
 	"github.com/change-fabric/moose/internal/email/provider"
-	"github.com/change-fabric/moose/internal/email/store"
-	"github.com/change-fabric/moose/internal/email/store/sqlite"
 	"github.com/change-fabric/moose/internal/email/tools"
 )
 
@@ -190,20 +191,20 @@ func TestResolverTable(t *testing.T) {
 		{"all inside a list", []string{"acc_a", "all"}, "acc_a,acc_b,acc_c"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := tools.Resolve(all, tc.refs)
+			got, err := fanout.Resolve(all, tc.refs)
 			if err != nil || ids(got) != tc.want {
 				t.Fatalf("Resolve(%q) = %s, %v; want %s", tc.refs, ids(got), err, tc.want)
 			}
 		})
 	}
 	for _, ref := range []string{"acc_zzz", "a@x", "group:none", "group:", "Work", "nick"} {
-		_, err := tools.Resolve(all, []string{ref})
-		var nf *tools.NotFoundError
+		_, err := fanout.Resolve(all, []string{ref})
+		var nf *fanout.NotFoundError
 		if !errors.As(err, &nf) || len(nf.Candidates) != 3 {
 			t.Errorf("Resolve(%q) err = %v, want not found with 3 candidates", ref, err)
 		}
 	}
-	if _, err := tools.Resolve(all, []string{"acc_a", "nope"}); err == nil {
+	if _, err := fanout.Resolve(all, []string{"acc_a", "nope"}); err == nil {
 		t.Error("one bad item in a list must fail the whole call, not be skipped")
 	}
 }
@@ -273,11 +274,11 @@ func TestSearchFiltersAndValidatesInput(t *testing.T) {
 
 func TestTwelveAccountsOneSlowFinishesAndTheCursorResumesIt(t *testing.T) {
 	// The shipped limits are 8 at once, 6s each, 20s overall.
-	if tools.DefaultConcurrency != 8 || tools.DefaultPerAccount != 6*time.Second || tools.DefaultOverall != 20*time.Second {
-		t.Fatalf("limits = %d %v %v", tools.DefaultConcurrency, tools.DefaultPerAccount, tools.DefaultOverall)
+	if fanout.DefaultConcurrency != 8 || fanout.DefaultPerAccount != 6*time.Second || fanout.DefaultOverall != 20*time.Second {
+		t.Fatalf("limits = %d %v %v", fanout.DefaultConcurrency, fanout.DefaultPerAccount, fanout.DefaultOverall)
 	}
 	e := newEnv(t)
-	e.d.Fanout = tools.Limits{PerAccount: 300 * time.Millisecond, Overall: 5 * time.Second} // scaled down; concurrency stays 8
+	e.d.Fanout = fanout.Limits{PerAccount: 300 * time.Millisecond, Overall: 5 * time.Second} // scaled down; concurrency stays 8
 	for i := 0; i < 12; i++ {
 		p := e.account(fmt.Sprintf("acc_%02d", i), fmt.Sprintf("u%02d@x.com", i), store.StatusOK)
 		p.AddMessage(msg(fmt.Sprintf("m%02d", i), "s@y.com", "s", "b", time.Duration(i+1)*time.Hour))

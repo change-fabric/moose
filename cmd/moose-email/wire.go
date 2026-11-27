@@ -22,17 +22,17 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/secretsmanager"
 
+	"github.com/change-fabric/moose/internal/accounts/accountprov"
+	"github.com/change-fabric/moose/internal/accounts/connect"
+	"github.com/change-fabric/moose/internal/accounts/envelope"
+	"github.com/change-fabric/moose/internal/accounts/store"
+	emaildynamo "github.com/change-fabric/moose/internal/accounts/store/dynamo"
+	emailsqlite "github.com/change-fabric/moose/internal/accounts/store/sqlite"
 	"github.com/change-fabric/moose/internal/approver/api"
 	"github.com/change-fabric/moose/internal/config"
-	"github.com/change-fabric/moose/internal/email/accountprov"
 	"github.com/change-fabric/moose/internal/email/attach"
-	"github.com/change-fabric/moose/internal/email/connect"
-	"github.com/change-fabric/moose/internal/email/envelope"
-	"github.com/change-fabric/moose/internal/email/oauthas"
 	"github.com/change-fabric/moose/internal/email/sendflow"
-	"github.com/change-fabric/moose/internal/email/store"
-	emaildynamo "github.com/change-fabric/moose/internal/email/store/dynamo"
-	emailsqlite "github.com/change-fabric/moose/internal/email/store/sqlite"
+	"github.com/change-fabric/moose/internal/oauthas"
 )
 
 // mount is one extra route the HTTP handler serves.

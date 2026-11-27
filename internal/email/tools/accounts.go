@@ -8,17 +8,18 @@ import (
 	"github.com/google/jsonschema-go/jsonschema"
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/change-fabric/moose/internal/accounts/fanout"
+	"github.com/change-fabric/moose/internal/accounts/palette"
+	"github.com/change-fabric/moose/internal/accounts/store"
 	"github.com/change-fabric/moose/internal/audit"
-	"github.com/change-fabric/moose/internal/email/palette"
 	"github.com/change-fabric/moose/internal/email/provider"
-	"github.com/change-fabric/moose/internal/email/store"
 	"github.com/change-fabric/moose/internal/mcpkit"
 )
 
 // ListAccountsIn is the email_list_accounts input.
 type ListAccountsIn struct {
 	// Account narrows the listing; see Refs. Omitted or "all" lists every account.
-	Account Refs `json:"account,omitempty"`
+	Account fanout.Refs `json:"account,omitempty"`
 }
 
 // AccountOut is one connected account (R1 and R6 fields). It never carries a
@@ -57,7 +58,7 @@ func (d Deps) registerListAccounts(s *sdk.Server) {
 			"Pass account (an id or exact address, \"group:<tag>\", or a list) to look at some accounts.",
 		InputSchema: &jsonschema.Schema{
 			Type:       "object",
-			Properties: map[string]*jsonschema.Schema{"account": refsSchema(refsHelp)},
+			Properties: map[string]*jsonschema.Schema{"account": fanout.RefsSchema(fanout.RefsHelp)},
 		},
 	}, mcpkit.ReadOnly(), func(ctx context.Context, req *sdk.CallToolRequest, in ListAccountsIn) (*sdk.CallToolResult, ListAccountsOut, error) {
 		audit.FromContext(ctx).SetAction(ToolListAccounts, "", "")
@@ -69,7 +70,7 @@ func (d Deps) registerListAccounts(s *sdk.Server) {
 		if err != nil {
 			return mcpkit.ErrorResult(ctx, "internal", "could not list accounts"), ListAccountsOut{}, nil
 		}
-		picked, err := Resolve(accts, in.Account)
+		picked, err := fanout.Resolve(accts, in.Account)
 		if err != nil {
 			return resolveError(ctx, err), ListAccountsOut{}, nil
 		}
@@ -89,7 +90,7 @@ func (d Deps) registerListAccounts(s *sdk.Server) {
 
 // resolveError maps a Resolve failure to a tool error.
 func resolveError(ctx context.Context, err error) *sdk.CallToolResult {
-	var nf *NotFoundError
+	var nf *fanout.NotFoundError
 	if errors.As(err, &nf) {
 		return mcpkit.ErrorResult(ctx, "account_not_found", nf.Error())
 	}

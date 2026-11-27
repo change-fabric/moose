@@ -11,9 +11,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/change-fabric/moose/internal/accounts/store"
 	"github.com/change-fabric/moose/internal/approver/api"
 	"github.com/change-fabric/moose/internal/approver/receipt"
-	"github.com/change-fabric/moose/internal/email/store"
 )
 
 // Contact request statuses, besides the approver's own (denied, expired).

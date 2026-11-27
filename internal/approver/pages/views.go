@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/change-fabric/moose/internal/accounts/palette"
 	"github.com/change-fabric/moose/internal/approver/api"
-	"github.com/change-fabric/moose/internal/email/palette"
 	"github.com/change-fabric/moose/internal/webui"
 )
 

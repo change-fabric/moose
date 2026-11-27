@@ -9,10 +9,10 @@ import (
 	"github.com/google/jsonschema-go/jsonschema"
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/change-fabric/moose/internal/accounts/store"
 	"github.com/change-fabric/moose/internal/audit"
 	"github.com/change-fabric/moose/internal/email/attach"
 	"github.com/change-fabric/moose/internal/email/provider"
-	"github.com/change-fabric/moose/internal/email/store"
 	"github.com/change-fabric/moose/internal/mcpkit"
 )
 

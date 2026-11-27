@@ -27,9 +27,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/change-fabric/moose/internal/accounts/envelope"
+	estore "github.com/change-fabric/moose/internal/accounts/store"
 	"github.com/change-fabric/moose/internal/approver/receipt"
-	"github.com/change-fabric/moose/internal/email/envelope"
-	estore "github.com/change-fabric/moose/internal/email/store"
 )
 
 // Errors compared with errors.Is.

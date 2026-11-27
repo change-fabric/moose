@@ -20,11 +20,11 @@ import (
 	"github.com/awslabs/aws-lambda-go-api-proxy/httpadapter"
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/change-fabric/moose/internal/accounts/connect"
 	"github.com/change-fabric/moose/internal/config"
-	"github.com/change-fabric/moose/internal/email/connect"
-	"github.com/change-fabric/moose/internal/email/oauthas"
 	"github.com/change-fabric/moose/internal/email/tools"
 	"github.com/change-fabric/moose/internal/mcpkit"
+	"github.com/change-fabric/moose/internal/oauthas"
 )
 
 // version is set at build time with -ldflags "-X main.version=...".

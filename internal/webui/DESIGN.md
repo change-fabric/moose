@@ -31,7 +31,7 @@ One owner, usually on a phone, decides whether moose may send a specific email, 
 --radius:.5rem;--target:2.75rem}
 ```
 
-Four authored colours plus `--error`. The account palette in internal/email/palette is data, not theme: it colours only the FROM banner and the account swatch. [evidence: internal/email/palette/palette.go#At]
+Four authored colours plus `--error`. The account palette in internal/accounts/palette is data, not theme: it colours only the FROM banner and the account swatch. [evidence: internal/accounts/palette/palette.go#At]
 Two literals stay outside the tokens on purpose: the QR code is black on white so phones can scan it, and swatch patterns overlay translucent black. [evidence: internal/webui/tokens.go#Tokens]
 
 ## Typography
@@ -87,7 +87,7 @@ Exceptions with a reason: the FROM banner (2px ink edge, palette fill, pattern s
 
 Do put a page's one primary action last, after what it acts on. [proposal]
 Do write state as a sentence in a card ("Nothing is waiting for approval."), not an icon. [evidence: internal/approver/pages/views.go#queue]
-Do write an error as what happened, then what to do next, with one link or button back. [evidence: internal/email/connect/page.go#errTmpl]
+Do write an error as what happened, then what to do next, with one link or button back. [evidence: internal/accounts/connect/page.go#errTmpl]
 Do not add a colour, font size, radius or gap that is not listed here; snap to the nearest step. [proposal]
 Do not restyle a module per page; if a page needs a new look, change the module for all pages. [proposal]
 

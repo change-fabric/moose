@@ -9,11 +9,12 @@ import (
 	"github.com/google/jsonschema-go/jsonschema"
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/change-fabric/moose/internal/accounts/fanout"
+	"github.com/change-fabric/moose/internal/accounts/store"
 	"github.com/change-fabric/moose/internal/audit"
 	"github.com/change-fabric/moose/internal/email/mailmsg"
 	"github.com/change-fabric/moose/internal/email/provider"
 	"github.com/change-fabric/moose/internal/email/sendflow"
-	"github.com/change-fabric/moose/internal/email/store"
 	"github.com/change-fabric/moose/internal/mcpkit"
 )
 
@@ -99,7 +100,7 @@ func singleAccount(accts []store.Account, ref string) (store.Account, error) {
 	if strings.EqualFold(ref, "all") || strings.HasPrefix(strings.ToLower(ref), "group:") {
 		return store.Account{}, errors.New("name exactly one account by id or address")
 	}
-	picked, err := Resolve(accts, []string{ref})
+	picked, err := fanout.Resolve(accts, []string{ref})
 	if err != nil {
 		return store.Account{}, err
 	}
@@ -118,11 +119,11 @@ func (d Deps) writeAccount(ctx context.Context, owner, ref, from string) (store.
 		return store.Account{}, mcpkit.ErrorResult(ctx, "internal", "could not list accounts")
 	}
 	if strings.TrimSpace(ref) == "" {
-		return store.Account{}, mcpkit.ErrorResult(ctx, "needs_account", "name the account (account_id: an id or exact address); candidates: "+strings.Join(candidates(sendable(accts)), ", "))
+		return store.Account{}, mcpkit.ErrorResult(ctx, "needs_account", "name the account (account_id: an id or exact address); candidates: "+strings.Join(fanout.Candidates(sendable(accts)), ", "))
 	}
 	a, err := singleAccount(accts, ref)
 	if err != nil {
-		var nf *NotFoundError
+		var nf *fanout.NotFoundError
 		if errors.As(err, &nf) {
 			return store.Account{}, resolveError(ctx, err)
 		}
@@ -366,7 +367,7 @@ func (d Deps) updateDraft(ctx context.Context, req *sdk.CallToolRequest, in Upda
 		}
 		named, err := singleAccount(accts, ref)
 		if err != nil {
-			var nf *NotFoundError
+			var nf *fanout.NotFoundError
 			if errors.As(err, &nf) {
 				return resolveError(ctx, err), DraftOut{}, nil
 			}

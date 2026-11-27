@@ -12,10 +12,11 @@ import (
 	"github.com/google/jsonschema-go/jsonschema"
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/change-fabric/moose/internal/accounts/fanout"
+	"github.com/change-fabric/moose/internal/accounts/store"
 	"github.com/change-fabric/moose/internal/audit"
-	"github.com/change-fabric/moose/internal/email/htmltext"
 	"github.com/change-fabric/moose/internal/email/provider"
-	"github.com/change-fabric/moose/internal/email/store"
+	"github.com/change-fabric/moose/internal/htmltext"
 	"github.com/change-fabric/moose/internal/mcpkit"
 )
 
@@ -54,7 +55,7 @@ func refOf(a store.Account) AccountRef { return AccountRef{ID: a.ID, Address: a.
 
 // ListMailboxesIn is the email_list_mailboxes input.
 type ListMailboxesIn struct {
-	Account Refs `json:"account,omitempty"`
+	Account fanout.Refs `json:"account,omitempty"`
 }
 
 // MailboxOut is one mailbox (label or folder) of one account.
@@ -67,9 +68,9 @@ type MailboxOut struct {
 
 // ListMailboxesOut is the email_list_mailboxes output.
 type ListMailboxesOut struct {
-	Mailboxes []MailboxOut    `json:"mailboxes"`
-	Accounts  []AccountReport `json:"accounts"`
-	Hint      string          `json:"hint,omitempty"`
+	Mailboxes []MailboxOut           `json:"mailboxes"`
+	Accounts  []fanout.AccountReport `json:"accounts"`
+	Hint      string                 `json:"hint,omitempty"`
 }
 
 func (d Deps) registerListMailboxes(s *sdk.Server) {
@@ -79,7 +80,7 @@ func (d Deps) registerListMailboxes(s *sdk.Server) {
 			"Omit account to cover every account that is ok; accounts that need reconnecting are reported in `accounts` and skipped.",
 		InputSchema: &jsonschema.Schema{
 			Type:       "object",
-			Properties: map[string]*jsonschema.Schema{"account": refsSchema(refsHelp)},
+			Properties: map[string]*jsonschema.Schema{"account": fanout.RefsSchema(fanout.RefsHelp)},
 		},
 	}, mcpkit.ReadOnly(), func(ctx context.Context, req *sdk.CallToolRequest, in ListMailboxesIn) (*sdk.CallToolResult, ListMailboxesOut, error) {
 		audit.FromContext(ctx).SetAction(ToolListMailboxes, "", "")
@@ -87,24 +88,24 @@ func (d Deps) registerListMailboxes(s *sdk.Server) {
 		if bad != nil {
 			return bad, ListMailboxesOut{}, nil
 		}
-		results, reports, _ := fanOut(ctx, d.Fanout, picked, func(ctx context.Context, a store.Account) (perAccountResult[MailboxOut], error) {
+		results, reports, _ := fanout.Run(ctx, d.Fanout, picked, func(ctx context.Context, a store.Account) (fanout.PerAccountResult[MailboxOut], error) {
 			p, err := d.provider(ctx, a)
 			if err != nil {
-				return perAccountResult[MailboxOut]{}, err
+				return fanout.PerAccountResult[MailboxOut]{}, err
 			}
 			var boxes []provider.Mailbox
 			if err := d.retry429(ctx, func() (e error) { boxes, e = p.ListMailboxes(ctx); return }); err != nil {
-				return perAccountResult[MailboxOut]{}, err
+				return fanout.PerAccountResult[MailboxOut]{}, err
 			}
-			var r perAccountResult[MailboxOut]
+			var r fanout.PerAccountResult[MailboxOut]
 			for _, b := range boxes {
-				r.items = append(r.items, MailboxOut{Account: refOf(a), ID: b.ID, Name: b.Name, System: b.System})
+				r.Items = append(r.Items, MailboxOut{Account: refOf(a), ID: b.ID, Name: b.Name, System: b.System})
 			}
 			return r, nil
 		})
 		out := ListMailboxesOut{Mailboxes: []MailboxOut{}, Accounts: reports, Hint: narrowHint(len(picked))}
 		for _, a := range picked {
-			out.Mailboxes = append(out.Mailboxes, results[a.ID].items...)
+			out.Mailboxes = append(out.Mailboxes, results[a.ID].Items...)
 		}
 		return nil, out, nil
 	})
@@ -115,18 +116,18 @@ func (d Deps) registerListMailboxes(s *sdk.Server) {
 // SearchIn is the email_search input. Text fields are literal values, never
 // provider syntax.
 type SearchIn struct {
-	Account       Refs   `json:"account,omitempty"`
-	From          string `json:"from,omitempty"`
-	To            string `json:"to,omitempty"`
-	Subject       string `json:"subject,omitempty"`
-	Text          string `json:"text,omitempty"`
-	After         string `json:"after,omitempty"`
-	Before        string `json:"before,omitempty"`
-	HasAttachment bool   `json:"has_attachment,omitempty"`
-	Mailbox       string `json:"mailbox,omitempty"`
-	Unread        bool   `json:"unread,omitempty"`
-	Limit         int    `json:"limit,omitempty"`
-	Cursor        string `json:"cursor,omitempty"`
+	Account       fanout.Refs `json:"account,omitempty"`
+	From          string      `json:"from,omitempty"`
+	To            string      `json:"to,omitempty"`
+	Subject       string      `json:"subject,omitempty"`
+	Text          string      `json:"text,omitempty"`
+	After         string      `json:"after,omitempty"`
+	Before        string      `json:"before,omitempty"`
+	HasAttachment bool        `json:"has_attachment,omitempty"`
+	Mailbox       string      `json:"mailbox,omitempty"`
+	Unread        bool        `json:"unread,omitempty"`
+	Limit         int         `json:"limit,omitempty"`
+	Cursor        string      `json:"cursor,omitempty"`
 }
 
 // MessageSummary is one search hit. Subject and snippet come from outside, so
@@ -147,8 +148,8 @@ type MessageSummary struct {
 
 // SearchOut is the email_search output (R3 shape).
 type SearchOut struct {
-	Results  []MessageSummary `json:"results"`
-	Accounts []AccountReport  `json:"accounts"`
+	Results  []MessageSummary       `json:"results"`
+	Accounts []fanout.AccountReport `json:"accounts"`
 	// Cursor resumes the search: pass it back with the same fields. It is
 	// absent when every account is exhausted.
 	Cursor string `json:"cursor,omitempty"`
@@ -166,7 +167,7 @@ func (d Deps) registerSearch(s *sdk.Server) {
 		InputSchema: &jsonschema.Schema{
 			Type: "object",
 			Properties: map[string]*jsonschema.Schema{
-				"account":        refsSchema(refsHelp),
+				"account":        fanout.RefsSchema(fanout.RefsHelp),
 				"from":           str("Sender address or name contains this."),
 				"to":             str("A recipient address or name contains this."),
 				"subject":        str("Subject contains this."),
@@ -193,7 +194,7 @@ func (d Deps) search(ctx context.Context, req *sdk.CallToolRequest, in SearchIn)
 	if err != nil {
 		return mcpkit.ErrorResult(ctx, "invalid_input", err.Error()), SearchOut{}, nil
 	}
-	fp := fingerprint(struct {
+	fp := fanout.Fingerprint(struct {
 		F, T, S, X, A, B, M string
 		H, U                bool
 	}{q.From, q.To, q.Subject, q.Text, in.After, in.Before, q.Mailbox, q.HasAttachment, q.Unread})
@@ -226,22 +227,22 @@ func (d Deps) search(ctx context.Context, req *sdk.CallToolRequest, in SearchIn)
 		per = max(room, 1)
 	}
 
-	results, reports, keep := fanOut(ctx, d.Fanout, targets, func(ctx context.Context, a store.Account) (perAccountResult[MessageSummary], error) {
+	results, reports, keep := fanout.Run(ctx, d.Fanout, targets, func(ctx context.Context, a store.Account) (fanout.PerAccountResult[MessageSummary], error) {
 		p, err := d.provider(ctx, a)
 		if err != nil {
-			return perAccountResult[MessageSummary]{}, err
+			return fanout.PerAccountResult[MessageSummary]{}, err
 		}
 		qa := q
 		qa.Cursor, qa.Limit = pos[a.ID], per
 		var res provider.SearchResult
 		if err := d.retry429(ctx, func() (e error) { res, e = p.Search(ctx, qa); return }); err != nil {
-			return perAccountResult[MessageSummary]{}, err
+			return fanout.PerAccountResult[MessageSummary]{}, err
 		}
 		tr := d.newTrust(a, nil)
-		r := perAccountResult[MessageSummary]{next: res.NextCursor}
+		r := fanout.PerAccountResult[MessageSummary]{Next: res.NextCursor}
 		for _, m := range res.Messages {
 			d.recordSent(ctx, a, m)
-			r.items = append(r.items, summarize(a, m, tr.of(ctx, m.From.Email)))
+			r.Items = append(r.Items, summarize(a, m, tr.of(ctx, m.From.Email)))
 		}
 		return r, nil
 	})
@@ -255,7 +256,7 @@ func (d Deps) search(ctx context.Context, req *sdk.CallToolRequest, in SearchIn)
 	for _, a := range targets {
 		if r, ok := results[a.ID]; ok {
 			cost := 0
-			for _, it := range r.items {
+			for _, it := range r.Items {
 				cost += len(it.Content) + 400
 			}
 			if cost > budget && len(out.Results) > 0 {
@@ -268,9 +269,9 @@ func (d Deps) search(ctx context.Context, req *sdk.CallToolRequest, in SearchIn)
 				continue
 			}
 			budget -= cost
-			out.Results = append(out.Results, r.items...)
-			if r.next != "" {
-				newPos[a.ID] = r.next
+			out.Results = append(out.Results, r.Items...)
+			if r.Next != "" {
+				newPos[a.ID] = r.Next
 			}
 		} else if keep[a.ID] {
 			newPos[a.ID] = pos[a.ID] // a timed-out account keeps its place
@@ -284,7 +285,7 @@ func (d Deps) search(ctx context.Context, req *sdk.CallToolRequest, in SearchIn)
 		return a.ID < b.ID
 	})
 	if len(newPos) > 0 {
-		out.Cursor = d.sealCursor(cursorBody{Owner: owner, Query: fp, Pos: newPos})
+		out.Cursor = d.sealCursor(fanout.CursorBody{Owner: owner, Query: fp, Pos: newPos})
 	}
 	return nil, out, nil
 }
@@ -520,7 +521,7 @@ func threadID(a store.Account, m provider.Message) string {
 // ---- helpers shared by the read tools ----
 
 // pick resolves the account argument for a fan-out tool.
-func (d Deps) pick(ctx context.Context, req *sdk.CallToolRequest, refs Refs) (string, []store.Account, *sdk.CallToolResult) {
+func (d Deps) pick(ctx context.Context, req *sdk.CallToolRequest, refs fanout.Refs) (string, []store.Account, *sdk.CallToolResult) {
 	owner := d.owner(req)
 	if owner == "" {
 		return "", nil, mcpkit.ErrorResult(ctx, "unauthorized", "no signed-in owner for this request")
@@ -532,7 +533,7 @@ func (d Deps) pick(ctx context.Context, req *sdk.CallToolRequest, refs Refs) (st
 	if err != nil {
 		return "", nil, mcpkit.ErrorResult(ctx, "internal", "could not list accounts")
 	}
-	picked, err := Resolve(accts, refs)
+	picked, err := fanout.Resolve(accts, refs)
 	if err != nil {
 		return "", nil, resolveError(ctx, err)
 	}
@@ -565,7 +566,7 @@ func (d Deps) single(ctx context.Context, req *sdk.CallToolRequest, id string) (
 		}
 	}
 	if acct == nil {
-		return store.Account{}, nil, "", resolveError(ctx, &NotFoundError{Ref: acctID, Candidates: candidates(accts)})
+		return store.Account{}, nil, "", resolveError(ctx, &fanout.NotFoundError{Ref: acctID, Candidates: fanout.Candidates(accts)})
 	}
 	switch acct.Status {
 	case store.StatusOK:
@@ -600,7 +601,7 @@ func (d Deps) providerError(ctx context.Context, err error) *sdk.CallToolResult 
 }
 
 func narrowHint(n int) string {
-	if n > hintAbove {
+	if n > fanout.HintAbove {
 		return fmt.Sprintf("%d accounts are in scope. Narrow with account: \"group:<tag>\" or a list of addresses to go faster.", n)
 	}
 	return ""

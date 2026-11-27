@@ -29,11 +29,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/change-fabric/moose/internal/accounts/palette"
 	"github.com/change-fabric/moose/internal/approver/api"
 	"github.com/change-fabric/moose/internal/approver/receipt"
 	"github.com/change-fabric/moose/internal/approver/store"
 	"github.com/change-fabric/moose/internal/approver/webauthn"
-	"github.com/change-fabric/moose/internal/email/palette"
 )
 
 // Server serves the approval pages.

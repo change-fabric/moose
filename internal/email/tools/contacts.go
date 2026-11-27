@@ -12,9 +12,10 @@ import (
 	"github.com/google/jsonschema-go/jsonschema"
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/change-fabric/moose/internal/accounts/fanout"
+	"github.com/change-fabric/moose/internal/accounts/store"
 	"github.com/change-fabric/moose/internal/audit"
 	"github.com/change-fabric/moose/internal/email/sendflow"
-	"github.com/change-fabric/moose/internal/email/store"
 	"github.com/change-fabric/moose/internal/mcpkit"
 )
 
@@ -37,10 +38,10 @@ const (
 // ContactsListIn is the contacts_list input.
 type ContactsListIn struct {
 	// Account narrows the listing; see Refs. Omitted or "all" covers every account.
-	Account Refs   `json:"account,omitempty"`
-	Trust   string `json:"trust,omitempty"`
-	Tag     string `json:"tag,omitempty"`
-	Limit   int    `json:"limit,omitempty"`
+	Account fanout.Refs `json:"account,omitempty"`
+	Trust   string      `json:"trust,omitempty"`
+	Tag     string      `json:"tag,omitempty"`
+	Limit   int         `json:"limit,omitempty"`
 }
 
 // ContactOut is one address as one account sees it.
@@ -68,7 +69,7 @@ func (d Deps) registerContactsList(s *sdk.Server) {
 		InputSchema: &jsonschema.Schema{
 			Type: "object",
 			Properties: map[string]*jsonschema.Schema{
-				"account": refsSchema(refsHelp),
+				"account": fanout.RefsSchema(fanout.RefsHelp),
 				"trust":   {Type: "string", Enum: []any{store.TrustNew, store.TrustKnown, store.TrustTrusted, store.TrustBlocked}, Description: "Only contacts at this trust level."},
 				"tag":     {Type: "string", Description: "Only contacts carrying this tag."},
 				"limit":   {Type: "integer", Minimum: ptrF(1), Maximum: ptrF(maxListLimit), Description: "Most contacts to return."},
@@ -100,7 +101,7 @@ func (d Deps) contactsList(ctx context.Context, req *sdk.CallToolRequest, in Con
 	if err != nil {
 		return mcpkit.ErrorResult(ctx, "internal", "could not list accounts"), ContactsListOut{}, nil
 	}
-	picked, err := Resolve(accts, in.Account)
+	picked, err := fanout.Resolve(accts, in.Account)
 	if err != nil {
 		return resolveError(ctx, err), ContactsListOut{}, nil
 	}
@@ -292,11 +293,11 @@ func (d Deps) contactsPropose(ctx context.Context, req *sdk.CallToolRequest, in 
 		return mcpkit.ErrorResult(ctx, "internal", "could not list accounts"), ContactsProposeOut{}, nil
 	}
 	if strings.TrimSpace(in.AccountID) == "" {
-		return mcpkit.ErrorResult(ctx, "needs_account", "name the account whose contacts change (account_id: an id or exact address); candidates: "+strings.Join(candidates(accts), ", ")), ContactsProposeOut{}, nil
+		return mcpkit.ErrorResult(ctx, "needs_account", "name the account whose contacts change (account_id: an id or exact address); candidates: "+strings.Join(fanout.Candidates(accts), ", ")), ContactsProposeOut{}, nil
 	}
 	a, err := singleAccount(accts, in.AccountID)
 	if err != nil {
-		var nf *NotFoundError
+		var nf *fanout.NotFoundError
 		if errors.As(err, &nf) {
 			return resolveError(ctx, err), ContactsProposeOut{}, nil
 		}

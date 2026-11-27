@@ -9,6 +9,7 @@ import (
 	"github.com/google/jsonschema-go/jsonschema"
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/change-fabric/moose/internal/accounts/fanout"
 	"github.com/change-fabric/moose/internal/audit"
 	"github.com/change-fabric/moose/internal/mcpkit"
 )
@@ -60,7 +61,7 @@ func (d Deps) registerAccountUpdate(s *sdk.Server) {
 		if ref == "" || strings.EqualFold(ref, "all") || strings.HasPrefix(strings.ToLower(ref), "group:") {
 			return mcpkit.ErrorResult(ctx, "invalid_input", "name exactly one account by id or address"), AccountOut{}, nil
 		}
-		picked, err := Resolve(accts, []string{ref})
+		picked, err := fanout.Resolve(accts, []string{ref})
 		if err != nil {
 			return resolveError(ctx, err), AccountOut{}, nil
 		}

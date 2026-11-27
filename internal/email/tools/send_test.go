@@ -9,14 +9,14 @@ import (
 
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/change-fabric/moose/internal/accounts/envelope"
+	"github.com/change-fabric/moose/internal/accounts/store"
 	"github.com/change-fabric/moose/internal/approver/api"
-	"github.com/change-fabric/moose/internal/email/envelope"
 	"github.com/change-fabric/moose/internal/email/fake"
 	"github.com/change-fabric/moose/internal/email/mailmsg"
 	"github.com/change-fabric/moose/internal/email/provider"
 	"github.com/change-fabric/moose/internal/email/sendflow"
 	"github.com/change-fabric/moose/internal/email/sendflow/flowtest"
-	"github.com/change-fabric/moose/internal/email/store"
 	"github.com/change-fabric/moose/internal/email/tools"
 )
 

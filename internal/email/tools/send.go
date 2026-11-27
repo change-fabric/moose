@@ -10,9 +10,10 @@ import (
 	"github.com/google/jsonschema-go/jsonschema"
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/change-fabric/moose/internal/accounts/fanout"
+	"github.com/change-fabric/moose/internal/accounts/store"
 	"github.com/change-fabric/moose/internal/audit"
 	"github.com/change-fabric/moose/internal/email/sendflow"
-	"github.com/change-fabric/moose/internal/email/store"
 	"github.com/change-fabric/moose/internal/mcpkit"
 )
 
@@ -236,11 +237,11 @@ func (d Deps) enableSend(ctx context.Context, req *sdk.CallToolRequest, in Enabl
 		return mcpkit.ErrorResult(ctx, "internal", "could not list accounts"), EnableSendOut{}, nil
 	}
 	if strings.TrimSpace(in.AccountID) == "" {
-		return mcpkit.ErrorResult(ctx, "needs_account", "name the account (account_id: an id or exact address); candidates: "+strings.Join(candidates(accts), ", ")), EnableSendOut{}, nil
+		return mcpkit.ErrorResult(ctx, "needs_account", "name the account (account_id: an id or exact address); candidates: "+strings.Join(fanout.Candidates(accts), ", ")), EnableSendOut{}, nil
 	}
 	a, err := singleAccount(accts, in.AccountID)
 	if err != nil {
-		var nf *NotFoundError
+		var nf *fanout.NotFoundError
 		if errors.As(err, &nf) {
 			return resolveError(ctx, err), EnableSendOut{}, nil
 		}
