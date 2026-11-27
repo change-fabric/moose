@@ -2,6 +2,7 @@ package config
 
 import (
 	"encoding/base64"
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -128,4 +129,75 @@ func TestEmailProdWithAPublicOriginNeedsOAuth(t *testing.T) {
 	cfg := load(t, "env: prod\nstore: {kind: dynamo, dynamo_table: t}\nemail: {provider: gmail, base_url: 'https://x.example', kms_key_id: k}\n",
 		map[string]string{"MOOSE_GOOGLE_OAUTH_SECRET_ARN": "arn:g"})
 	wantErr(t, cfg.ValidateEmail(), "a public /mcp needs the OAuth server")
+}
+
+func TestEmailProvidersDefaultToGoogleAndValidate(t *testing.T) {
+	cfg := load(t, "email: {provider: gmail}\n", nil)
+	if got := cfg.Email.ProviderList(); len(got) != 1 || got[0] != "google" {
+		t.Fatalf("default providers = %v, want [google]", got)
+	}
+	if cfg.Email.MicrosoftEnabled() {
+		t.Fatal("Microsoft must default to off")
+	}
+	for name, tc := range map[string]struct{ body, want string }{
+		"unknown":    {"email: {provider: gmail, providers: [google, imap]}\n", `"imap" is not google or microsoft`},
+		"duplicate":  {"email: {provider: gmail, providers: [google, google]}\n", "twice"},
+		"empty":      {"email: {provider: gmail, providers: []}\n", "at least one"},
+		"not listed": {"email: {provider: gmail, providers: [google], microsoft: {enabled: true}}\n", "does not list microsoft"},
+	} {
+		t.Run(name, func(t *testing.T) { wantErr(t, load(t, tc.body, nil).ValidateEmail(), tc.want) })
+	}
+	both := load(t, "email: {provider: gmail, providers: [google, microsoft]}\n", nil)
+	if err := both.ValidateEmail(); err != nil {
+		t.Fatal(err)
+	}
+	if both.Email.MicrosoftEnabled() {
+		t.Fatal("listed but not enabled must stay off")
+	}
+}
+
+func TestEmailMicrosoftNeedsItsOwnSecretsOnlyWhenEnabled(t *testing.T) {
+	const section = "email: {provider: gmail, base_url: 'https://moose.example.org', kms_key_id: k, providers: [%s], microsoft: {enabled: %s%s}}\n"
+	body := func(providers, enabled, extra string) string { return fmt.Sprintf(section, providers, enabled, extra) }
+	google := map[string]string{"MOOSE_GOOGLE_OAUTH_SECRET_ARN": "arn:g"}
+
+	// Listed and off: no Microsoft secret is needed.
+	if err := load(t, body("google, microsoft", "false", ""), google).ValidateEmail(); err != nil {
+		t.Fatal(err)
+	}
+	// Enabled: a client id and exactly one secret source.
+	wantErr(t, load(t, body("google, microsoft", "true", ""), google).ValidateEmail(), "email.microsoft.client_id")
+	wantErr(t, load(t, body("google, microsoft", "true", ", client_id: ms"), google).ValidateEmail(), "client_secret_ref")
+	both := map[string]string{"MOOSE_GOOGLE_OAUTH_SECRET_ARN": "arn:g", "MOOSE_MICROSOFT_CLIENT_SECRET": "s"}
+	wantErr(t, load(t, body("google, microsoft", "true", ", client_id: ms, client_secret_ref: arn:m"), both).ValidateEmail(), "not both")
+	ok := load(t, body("google, microsoft", "true", ", client_id: ms, client_secret_ref: arn:m"), google)
+	if err := ok.ValidateEmail(); err != nil {
+		t.Fatal(err)
+	}
+	if !ok.Email.MicrosoftEnabled() {
+		t.Fatal("listed and enabled must be on")
+	}
+	// A dev secret is accepted in dev and refused in prod.
+	dev := map[string]string{"MOOSE_GOOGLE_OAUTH_SECRET_ARN": "arn:g", "MOOSE_MICROSOFT_CLIENT_SECRET": "s"}
+	if err := load(t, body("google, microsoft", "true", ", client_id: ms"), dev).ValidateEmail(); err != nil {
+		t.Fatal(err)
+	}
+	prod := "env: prod\n" + body("google, microsoft", "true", ", client_id: ms")
+	wantErr(t, load(t, prod, dev).ValidateEmail(), "refused when env is prod")
+}
+
+func TestEmailGoogleSecretsAreNotNeededWithoutGoogle(t *testing.T) {
+	const body = "email: {provider: gmail, base_url: 'https://moose.example.org', kms_key_id: k, providers: [microsoft], microsoft: {enabled: true, client_id: ms, client_secret_ref: 'arn:m'}}\n"
+	if err := load(t, body, nil).ValidateEmail(); err != nil {
+		t.Fatalf("a Microsoft-only deployment needs no Google client: %v", err)
+	}
+}
+
+func TestEmailMicrosoftSettingsComeFromTheEnvironment(t *testing.T) {
+	cfg := load(t, "email: {provider: gmail}\n", map[string]string{
+		"MOOSE_MICROSOFT_CLIENT_ID": "ms-id", "MOOSE_MICROSOFT_OAUTH_SECRET_ARN": "arn:m", "MOOSE_MICROSOFT_CLIENT_SECRET": "s"})
+	m := cfg.Email.Microsoft
+	if m.ClientID != "ms-id" || m.ClientSecretRef != "arn:m" || m.ClientSecret != "s" {
+		t.Fatalf("env overrides not applied: %+v", m)
+	}
 }

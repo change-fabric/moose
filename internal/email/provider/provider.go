@@ -112,6 +112,10 @@ type Capabilities struct {
 	// against the Sent copy. Providers without it (Gmail) send the exact stored
 	// bytes.
 	NativeDraftSend bool `json:"native_draft_send"`
+	// ReadOnly reports that the account can only be read: drafts and send are
+	// not implemented, so the write tools answer unsupported_for_provider.
+	// Microsoft Graph reports it until its draft and send path lands.
+	ReadOnly bool `json:"read_only,omitempty"`
 }
 
 // Query is the neutral search request. Zero fields are unset. Text fields are

@@ -34,7 +34,9 @@ import (
 	"github.com/change-fabric/moose/internal/accounts/envelope"
 	"github.com/change-fabric/moose/internal/accounts/store"
 	"github.com/change-fabric/moose/internal/email/gmail"
+	"github.com/change-fabric/moose/internal/email/graph"
 	"github.com/change-fabric/moose/internal/email/provider"
+	"github.com/change-fabric/moose/internal/graphapi"
 )
 
 // refreshSkew is how early a cached access token is treated as expired.
@@ -62,6 +64,9 @@ type Source struct {
 	// GmailOptions are extra options for the Gmail client (tests pass
 	// option.WithEndpoint).
 	GmailOptions []option.ClientOption
+	// GraphBaseURL overrides the Microsoft Graph root (tests point it at an
+	// httptest server). Empty means graphapi.DefaultBaseURL.
+	GraphBaseURL string
 	Now          func() time.Time
 	// Log receives write-back failures. Nil discards them. It never receives a
 	// token.
@@ -86,6 +91,15 @@ func (s *Source) Provider(ctx context.Context, a store.Account) (provider.Provid
 			return s.Token(ctx, a)
 		}))}, s.GmailOptions...)
 		return gmail.New(ctx, opts...)
+	case store.ProviderMicrosoft:
+		// Graph's own error mapping (graphapi) turns a claims challenge or an
+		// interaction_required answer into provider.ErrAuth; token-endpoint
+		// failures are mapped in Token.
+		g := graphapi.New(tokenFunc(func() (*oauth2.Token, error) { return s.Token(ctx, a) }))
+		if s.GraphBaseURL != "" {
+			g.BaseURL = s.GraphBaseURL
+		}
+		return graph.New(g), nil
 	}
 	return nil, fmt.Errorf("accountprov: unsupported provider %q", a.Provider)
 }

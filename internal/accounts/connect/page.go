@@ -66,7 +66,11 @@ type StaticOwner string
 func (o StaticOwner) Owner(*http.Request) (string, bool) { return string(o), o != "" }
 
 type rowView struct {
-	ID, Address, DisplayName     string
+	ID, Address, DisplayName string
+	// Provider is the route segment (google, microsoft); ProviderLabel the badge text.
+	Provider, ProviderLabel string
+	// ReadOnlyNote says why sending cannot be turned on, when it cannot.
+	ReadOnlyNote                 string
 	Initial                      string
 	ColorName, Hex, Ink, Pattern string
 	Groups                       string
@@ -78,10 +82,14 @@ type rowView struct {
 	LastError                    string
 }
 
+// providerView is one Connect button and its help paragraph.
+type providerView struct{ Name, Label, Help string }
+
 type pageView struct {
-	CSRF   string
-	Rows   []rowView
-	Notice string
+	CSRF      string
+	Providers []providerView
+	Rows      []rowView
+	Notice    string
 	// SendNote explains why Enable send is unavailable, when it is.
 	SendNote string
 }
@@ -91,13 +99,21 @@ var statusLabels = map[string]string{
 	store.StatusNeedsReauth:  "Needs reconnect",
 	store.StatusError:        "Error",
 	store.StatusDisconnected: "Disconnected",
+	// Shown for an account whose provider is switched off in config.
+	store.StatusProviderDisabled: "Provider turned off",
 }
 
 // rows builds the view rows. Accounts that need reauthorization sort first;
 // the rest keep connect order.
-func rows(accts []store.Account, approverReady bool) []rowView {
+func rows(accts []store.Account, approverReady bool, reg *Registry) []rowView {
 	out := make([]rowView, 0, len(accts))
 	for _, a := range accts {
+		prov := accountProvider(a)
+		_, err := reg.Get(prov)
+		off := err != nil && a.Status != store.StatusDisconnected
+		if off {
+			a.Status = store.StatusProviderDisabled
+		}
 		c := palette.At(a.ColorIndex)
 		label := statusLabels[a.Status]
 		if label == "" {
@@ -109,15 +125,19 @@ func rows(accts []store.Account, approverReady bool) []rowView {
 		}
 		out = append(out, rowView{
 			ID: a.ID, Initial: initial(a.Address), Address: a.Address, DisplayName: a.DisplayName,
+			Provider: prov, ProviderLabel: providerLabel(reg, prov),
 			ColorName: c.Name, Hex: c.Hex, Ink: c.Ink, Pattern: palette.Pattern(a.ColorIndex),
 			Groups: strings.Join(a.Groups, ", "), Status: a.Status, StatusLabel: label, LastSync: last,
 			SendEnabled: a.SendEnabled, IsDefault: a.IsDefault,
 			NeedsReauth:   a.Status == store.StatusNeedsReauth,
 			Disconnected:  a.Status == store.StatusDisconnected,
-			CanReconnect:  a.Status == store.StatusNeedsReauth || a.Status == store.StatusDisconnected,
-			CanEnableSend: !a.SendEnabled && a.Status == store.StatusOK && approverReady,
+			CanReconnect:  !off && (a.Status == store.StatusNeedsReauth || a.Status == store.StatusDisconnected),
+			CanEnableSend: !a.SendEnabled && a.Status == store.StatusOK && approverReady && !a.Caps.ReadOnly,
 			LastError:     a.LastError,
 		})
+		if a.Caps.ReadOnly {
+			out[len(out)-1].ReadOnlyNote = "Read-only: sending is not available for " + providerLabel(reg, prov) + " accounts yet."
+		}
 	}
 	// accts arrive in connect order and the sort is stable.
 	sort.SliceStable(out, func(i, j int) bool { return out[i].NeedsReauth && !out[j].NeedsReauth })
@@ -147,7 +167,12 @@ func (s *Server) page(w http.ResponseWriter, r *http.Request) {
 		csrf = c.Value
 	}
 	http.SetCookie(w, s.cookie(csrfCookie, csrf, 3600, http.SameSiteStrictMode))
-	v := pageView{CSRF: csrf, Rows: rows(accts, s.d.Approver != nil)}
+	v := pageView{CSRF: csrf, Rows: rows(accts, s.d.Approver != nil, s.adapters)}
+	for _, name := range s.order {
+		if ad, err := s.adapters.Get(name); err == nil {
+			v.Providers = append(v.Providers, providerView{Name: name, Label: ad.Label(), Help: ad.Help()})
+		}
+	}
 	if s.d.Approver == nil {
 		v.SendNote = "Every account is read-only for now. Turning on send with your passkey comes in a later update."
 	}
@@ -197,7 +222,8 @@ ul.accts .card{margin:0}
 .pat-stripes{background-image:repeating-linear-gradient(45deg,rgba(0,0,0,.28) 0 4px,transparent 4px 9px)}
 .pat-dots{background-image:radial-gradient(rgba(0,0,0,.35) 2px,transparent 2px);background-size:8px 8px}
 .pat-checks{background-image:conic-gradient(rgba(0,0,0,.3) 25%,transparent 0 50%,rgba(0,0,0,.3) 0 75%,transparent 0);background-size:10px 10px}
-.chip.ok{color:var(--ok)}.chip.needs_reauth,.chip.error{color:var(--bad)}.chip.disconnected{color:var(--muted)}
+.chip.ok{color:var(--ok)}.chip.needs_reauth,.chip.error{color:var(--bad)}.chip.disconnected,.chip.provider_disabled{color:var(--muted)}
+.badge{display:inline-block;padding:0 .5rem;border:1px solid var(--field);border-radius:var(--radius);font-size:.833rem;font-weight:600}
 .notice{border-color:var(--ok);color:var(--ok)}
 .err{color:var(--bad)}
 details.help{margin:1rem 0}
@@ -229,11 +255,11 @@ var pageTmpl = template.Must(template.New("page").Parse(`<!doctype html>
 <body><main>
 <header class="top">
  <div><h1>Connected accounts</h1>
- <p class="note">The Gmail accounts Claude can reach through this moose connection.</p></div>
- <form method="post" action="/connect/google/start"><input type="hidden" name="csrf" value="{{.CSRF}}"><button class="primary" type="submit">Connect Google account</button></form>
+ <p class="note">The mail accounts Claude can reach through this moose connection.</p></div>
+ <div class="group">{{range .Providers}}<form method="post" action="/connect/{{.Name}}/start"><input type="hidden" name="csrf" value="{{$.CSRF}}"><button class="primary" type="submit">Connect {{.Label}} account</button></form>{{end}}</div>
 </header>
 <details class="help"><summary>What happens when I connect?</summary>
- <p>Google asks for permission to read mail and manage drafts. Because this is your own private app, it first shows an unverified-app warning: click <b>Advanced</b>, then <b>Go to moose.changefabric.org (unsafe)</b>, then allow both permissions.</p>
+ {{range .Providers}}<p><b>{{.Label}}.</b> {{.Help}}</p>{{end}}
 </details>
 {{if .Notice}}<p class="card notice" role="status">{{.Notice}}</p>{{end}}
 {{if .SendNote}}<p class="note">{{.SendNote}}</p>{{end}}
@@ -242,23 +268,24 @@ var pageTmpl = template.Must(template.New("page").Parse(`<!doctype html>
  <div class="head">
   <span class="swatch pat-{{.Pattern}}" style="background-color:{{.Hex}};color:{{.Ink}}" role="img" aria-label="Colour {{.ColorName}}" title="{{.ColorName}}">{{.Initial}}</span>
   <div class="ident">
-   <div class="mono" id="n-{{.ID}}">{{.Address}}</div>
+   <div class="mono" id="n-{{.ID}}">{{.Address}} <span class="badge">{{.ProviderLabel}}</span></div>
    <div><span class="chip {{.Status}}">{{.StatusLabel}}</span>
     <span class="meta">{{.LastSync}}</span></div>
    <div class="meta">{{if .IsDefault}}Default · {{end}}{{.ColorName}} · {{if .SendEnabled}}Sending on{{else}}Read-only{{end}}</div>
+   {{if .ReadOnlyNote}}<div class="meta">{{.ReadOnlyNote}}</div>{{end}}
    {{if .DisplayName}}<div class="meta">{{.DisplayName}}{{if .Groups}} · {{.Groups}}{{end}}</div>{{end}}
    {{if .LastError}}<div class="err">{{.LastError}}</div>{{end}}
   </div>
  </div>
  <div class="bar">
   <div class="group">
-   {{if .CanReconnect}}<form method="post" action="/connect/google/start"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="account_id" value="{{.ID}}"><button class="primary" type="submit">Reconnect</button></form>{{end}}
+   {{if .CanReconnect}}<form method="post" action="/connect/{{.Provider}}/start"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="account_id" value="{{.ID}}"><button class="primary" type="submit">Reconnect</button></form>{{end}}
    {{if .SendEnabled}}<form method="post" action="/connect/accounts/{{.ID}}/disable-send"><input type="hidden" name="csrf" value="{{$.CSRF}}"><button type="submit">Turn off sending</button></form>{{end}}
    {{if .CanEnableSend}}<form method="post" action="/connect/accounts/{{.ID}}/enable-send"><input type="hidden" name="csrf" value="{{$.CSRF}}"><button type="submit">Enable sending...</button></form>{{end}}
   </div>
   {{if not .Disconnected}}<details class="danger-zone"><summary><span class="closed">Disconnect...</span><span class="opened">Cancel</span></summary>
    <div class="card confirm">
-   <p>This deletes the stored Google tokens for <b>{{.Address}}</b>. Claude loses access until you connect it again.</p>
+   <p>This deletes the stored {{.ProviderLabel}} tokens for <b>{{.Address}}</b>. Claude loses access until you connect it again.</p>
    <form method="post" action="/connect/accounts/{{.ID}}/disconnect"><input type="hidden" name="csrf" value="{{$.CSRF}}">
     <label for="c-{{.ID}}">Type <b>{{.Address}}</b> to confirm</label>
     <input type="text" id="c-{{.ID}}" name="confirm" autocomplete="off" spellcheck="false" autocapitalize="off" required>
@@ -267,7 +294,7 @@ var pageTmpl = template.Must(template.New("page").Parse(`<!doctype html>
   </details>{{end}}
  </div>
 </section></li>{{end}}
-</ul>{{else}}<p class="card note">No accounts connected yet. Use Connect Google account above to add your first one.</p>{{end}}
+</ul>{{else}}<p class="card note">No accounts connected yet. Use a Connect button above to add your first one.</p>{{end}}
 </main></body></html>`))
 
 var errTmpl = template.Must(template.New("err").Parse(`<!doctype html>

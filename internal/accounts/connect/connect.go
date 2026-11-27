@@ -1,8 +1,10 @@
-// Package connect serves the Google connect page, /connect/google: the one
-// hosted page moose-email has besides login. It runs the Google OAuth web flow
-// (offline access, scopes gmail.readonly and gmail.compose, state and PKCE),
-// stores each connected mailbox as an account that is read-only until send is
-// enabled, and lists every account with the controls R9 asks for.
+// Package connect serves the connect page, /connect/google: the one hosted page
+// moose-email has besides login. It runs one OAuth web flow per provider
+// adapter (Google: offline access, gmail.readonly and gmail.compose; Microsoft:
+// the /common authority and the mail scopes), always with state and PKCE, at
+// /connect/{provider}/start and /connect/{provider}/callback. It stores each
+// connected mailbox as an account that is read-only until send is enabled, and
+// lists every account with a provider badge and the controls R9 asks for.
 //
 // Enabling send needs a passkey approval, so the Enable send button creates an
 // `account-send-enable` request with the approver and sends the browser there.
@@ -35,11 +37,23 @@ import (
 
 // Paths served by Handler. Mount the handler at Prefix.
 const (
-	Prefix       = "/connect/"
-	PagePath     = "/connect/google"
+	Prefix = "/connect/"
+	// PagePath is the accounts page. It keeps its Google-era address so
+	// bookmarks work; it lists every provider's accounts.
+	PagePath = "/connect/google"
+	// StartPath and CallbackPath are the Google routes. They are the
+	// {provider}=google case of StartPathFor and CallbackPathFor, so the
+	// redirect URI already registered with Google is unchanged and needs no
+	// redirect.
 	StartPath    = "/connect/google/start"
 	CallbackPath = "/connect/google/callback"
 )
+
+// StartPathFor is the route that starts a connect for a provider.
+func StartPathFor(provider string) string { return Prefix + provider + "/start" }
+
+// CallbackPathFor is the OAuth redirect route for a provider.
+func CallbackPathFor(provider string) string { return Prefix + provider + "/callback" }
 
 // Google scopes. Send is gated in code, so compose is requested up front.
 const (
@@ -60,6 +74,9 @@ const (
 type Profile struct {
 	Address     string
 	DisplayName string
+	// ProviderUID is the provider's stable identity for the mailbox (Microsoft:
+	// tid.oid). Empty means the lowercased address is the identity (Google).
+	ProviderUID string
 	Caps        provider.Capabilities
 }
 
@@ -99,9 +116,14 @@ type Approver interface {
 type Deps struct {
 	Store store.Store
 	Seal  envelope.Sealer
-	// OAuth is the Google web client; build it with GoogleConfig.
-	OAuth    *oauth2.Config
-	Profile  ProfileFunc
+	// OAuth is the Google web client; build it with GoogleConfig. Together with
+	// Profile it registers the Google adapter; leave both nil to offer other
+	// providers only.
+	OAuth   *oauth2.Config
+	Profile ProfileFunc
+	// Adapters are further providers (see NewMicrosoftAdapter). Only providers
+	// named here, or Google through OAuth, can be connected or reconnected.
+	Adapters []Adapter
 	Auth     Authenticator
 	Approver Approver // nil leaves Enable send unavailable
 	// BaseURL is the public origin, used for origin checks and to confine approval redirects.
@@ -129,15 +151,21 @@ func GoogleConfig(clientID, clientSecret, baseURL string) *oauth2.Config {
 type Server struct {
 	d        Deps
 	adapters *Registry
-	origin   string
-	baseURL  *url.URL
+	// order is the registered provider names in display order: Google first.
+	order   []string
+	origin  string
+	baseURL *url.URL
 }
 
 // New validates deps and returns the server.
 func New(d Deps) (*Server, error) {
 	switch {
-	case d.Store == nil || d.Seal == nil || d.OAuth == nil || d.Profile == nil || d.Auth == nil:
+	case d.Store == nil || d.Seal == nil || d.Auth == nil:
 		return nil, errors.New("connect: Store, Seal, OAuth, Profile and Auth are required")
+	case (d.OAuth == nil) != (d.Profile == nil):
+		return nil, errors.New("connect: Store, Seal, OAuth, Profile and Auth are required")
+	case d.OAuth == nil && len(d.Adapters) == 0:
+		return nil, errors.New("connect: at least one provider is required: OAuth and Profile, or Adapters")
 	}
 	u, err := url.Parse(d.BaseURL)
 	if err != nil || u.Host == "" {
@@ -149,16 +177,22 @@ func New(d Deps) (*Server, error) {
 	if d.Log == nil {
 		d.Log = slog.Default()
 	}
-	adapters := NewRegistry(NewGoogleAdapter(d.OAuth, d.Profile))
-	return &Server{d: d, adapters: adapters, baseURL: u, origin: u.Scheme + "://" + u.Host}, nil
+	adapters := NewRegistry()
+	if d.OAuth != nil {
+		adapters.Register(NewGoogleAdapter(d.OAuth, d.Profile))
+	}
+	for _, a := range d.Adapters {
+		adapters.Register(a)
+	}
+	return &Server{d: d, adapters: adapters, order: adapters.Names(), baseURL: u, origin: u.Scheme + "://" + u.Host}, nil
 }
 
 // Handler serves every connect route. Mount it at Prefix.
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET "+PagePath, s.page)
-	mux.HandleFunc("POST "+StartPath, s.start)
-	mux.HandleFunc("GET "+CallbackPath, s.callback)
+	mux.HandleFunc("POST "+Prefix+"{provider}/start", s.start)
+	mux.HandleFunc("GET "+Prefix+"{provider}/callback", s.callback)
 	mux.HandleFunc("POST "+Prefix+"accounts/{id}/enable-send", s.enableSend)
 	mux.HandleFunc("POST "+Prefix+"accounts/{id}/disable-send", s.disableSend)
 	mux.HandleFunc("POST "+Prefix+"accounts/{id}/disconnect", s.disconnect)
@@ -238,8 +272,23 @@ func randomToken(n int) string {
 
 // ---- start and callback ----
 
+// adapterFor resolves the {provider} segment of a connect route. A provider
+// that is not registered (unknown, or switched off in config) is not found.
+func (s *Server) adapterFor(w http.ResponseWriter, r *http.Request) (Adapter, bool) {
+	ad, err := s.adapters.Get(r.PathValue("provider"))
+	if err != nil {
+		s.fail(w, http.StatusNotFound, "Provider not available", "That account provider is not available on this moose.")
+		return nil, false
+	}
+	return ad, true
+}
+
 func (s *Server) start(w http.ResponseWriter, r *http.Request) {
 	owner, ok := s.ownerPost(w, r)
+	if !ok {
+		return
+	}
+	ad, ok := s.adapterFor(w, r)
 	if !ok {
 		return
 	}
@@ -251,12 +300,18 @@ func (s *Server) start(w http.ResponseWriter, r *http.Request) {
 	}
 	st := store.ConnectState{Owner: owner}
 	if id := r.PostFormValue("account_id"); id != "" {
-		if a, ok := findByID(accts, id); !ok || a.Owner != owner {
+		a, ok := findByID(accts, id)
+		if !ok || a.Owner != owner {
 			s.fail(w, http.StatusNotFound, "Account not found", "That account is not connected here.")
+			return
+		}
+		if accountProvider(a) != ad.Name() {
+			s.fail(w, http.StatusConflict, "Wrong provider", fmt.Sprintf("%s is a %s account. Reconnect it with %s.", a.Address, providerLabel(s.adapters, accountProvider(a)), providerLabel(s.adapters, accountProvider(a))))
 			return
 		}
 		st.ReconnectID = id
 	}
+	st.Provider = ad.Name()
 	state := randomToken(32)
 	verifier := oauth2.GenerateVerifier()
 	st.Hash, st.Verifier = store.HashSecret(state), verifier
@@ -265,29 +320,31 @@ func (s *Server) start(w http.ResponseWriter, r *http.Request) {
 		s.internal(w, "store connect state", err)
 		return
 	}
-	opts := []oauth2.AuthCodeOption{
-		oauth2.AccessTypeOffline,
-		oauth2.S256ChallengeOption(verifier),
-		oauth2.SetAuthURLParam("prompt", "consent"), // always return a refresh token
-	}
+	hint := ""
 	if a, ok := findByID(accts, st.ReconnectID); ok {
-		opts = append(opts, oauth2.SetAuthURLParam("login_hint", a.Address))
+		hint = a.Address
 	}
-	ad, err := s.adapters.Get(ProviderGoogle)
-	if err != nil {
-		s.internal(w, "connect adapter", err)
-		return
-	}
+	opts := append([]oauth2.AuthCodeOption{oauth2.S256ChallengeOption(verifier)}, ad.AuthOptions(hint)...)
 	http.Redirect(w, r, ad.OAuthConfig(nil).AuthCodeURL(state, opts...), http.StatusSeeOther)
 }
 
 func (s *Server) callback(w http.ResponseWriter, r *http.Request) {
+	ad, ok := s.adapterFor(w, r)
+	if !ok {
+		return
+	}
+	q := r.URL.Query()
+	if ad.Name() == ProviderMicrosoft && q.Get("admin_consent") != "" && q.Get("state") == "" {
+		// The tenant administrator's browser, not the owner's: a static page with
+		// no session and nothing stored.
+		s.adminConsentAnswer(w, q)
+		return
+	}
 	owner, ok := s.owner(w, r)
 	if !ok {
 		return
 	}
 	ctx := r.Context()
-	q := r.URL.Query()
 	state := q.Get("state")
 	if state == "" {
 		s.fail(w, http.StatusBadRequest, "Connect link invalid", "The connect request had no state. Start again from the connect page.")
@@ -306,18 +363,23 @@ func (s *Server) callback(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, http.StatusForbidden, "Wrong session", "This connect attempt was started by a different session.")
 		return
 	}
+	if stProvider(st) != ad.Name() {
+		s.fail(w, http.StatusBadRequest, "Connect link invalid", "This connect attempt was started for a different provider. Start again from the connect page.")
+		return
+	}
+	label := ad.Label()
 	if e := q.Get("error"); e != "" {
-		s.fail(w, http.StatusBadRequest, "Google did not connect the account", "Google answered: "+e+". Nothing was saved.")
+		ec := ad.CallbackError(e, q.Get("error_description"))
+		if ec.Href != "" {
+			s.failWith(w, http.StatusBadRequest, ec.Title, ec.Message, ec.Href, ec.Label)
+			return
+		}
+		s.fail(w, http.StatusBadRequest, ec.Title, ec.Message)
 		return
 	}
 	code := q.Get("code")
 	if code == "" {
-		s.fail(w, http.StatusBadRequest, "Connect link invalid", "Google returned no authorization code.")
-		return
-	}
-	ad, err := s.adapters.Get(ProviderGoogle)
-	if err != nil {
-		s.internal(w, "connect adapter", err)
+		s.fail(w, http.StatusBadRequest, "Connect link invalid", label+" returned no authorization code.")
 		return
 	}
 	xctx := ctx
@@ -326,30 +388,31 @@ func (s *Server) callback(w http.ResponseWriter, r *http.Request) {
 	}
 	tok, err := ad.OAuthConfig(nil).Exchange(xctx, code, oauth2.VerifierOption(st.Verifier))
 	if err != nil {
-		s.d.Log.Warn("connect: token exchange failed", "err", err.Error())
-		s.fail(w, http.StatusBadGateway, "Google refused the code", "The authorization code could not be exchanged. Start again.")
+		s.d.Log.Warn("connect: token exchange failed", "provider", ad.Name(), "err", err.Error())
+		s.fail(w, http.StatusBadGateway, label+" refused the code", "The authorization code could not be exchanged. Start again.")
 		return
 	}
 	rawScope, _ := tok.Extra("scope").(string)
 	if missing := ad.MissingScopes(strings.Fields(rawScope), nil); len(missing) > 0 {
 		s.fail(w, http.StatusBadRequest, "Permissions missing",
-			"moose needs both Gmail permissions: read mail and manage drafts. Missing: "+strings.Join(missing, ", ")+". Nothing was saved.")
+			"moose needs every permission it asked for on the "+label+" screen. Missing: "+strings.Join(missing, ", ")+". Nothing was saved.")
 		return
 	}
 	if tok.RefreshToken == "" {
-		s.fail(w, http.StatusBadGateway, "No refresh token", "Google did not return a refresh token. Remove moose from your Google account's third-party access and connect again.")
+		s.fail(w, http.StatusBadGateway, "No refresh token", label+" did not return a refresh token. Remove moose from your "+label+" account's third-party access and connect again.")
 		return
 	}
 	prof, err := ad.Profile(xctx, tok)
 	if err != nil || prof.Address == "" {
-		s.d.Log.Warn("connect: profile lookup failed", "err", fmt.Sprint(err))
-		s.fail(w, http.StatusBadGateway, "Could not read the mailbox", "Google accepted the code but the mailbox profile could not be read. Start again.")
+		s.d.Log.Warn("connect: profile lookup failed", "provider", ad.Name(), "err", fmt.Sprint(err))
+		s.fail(w, http.StatusBadGateway, "Could not read the mailbox", label+" accepted the code but the mailbox profile could not be read. Start again.")
 		return
 	}
-	acct, err := s.saveAccount(ctx, owner, st, prof, tok.RefreshToken)
+	all, mail := ad.Grant(strings.Fields(rawScope))
+	acct, err := s.saveAccount(ctx, owner, ad, st, prof, tok.RefreshToken, all, mail)
 	switch {
 	case errors.Is(err, errWrongAccount):
-		s.fail(w, http.StatusConflict, "Different Google account", err.Error())
+		s.fail(w, http.StatusConflict, "Different "+label+" account", err.Error())
 		return
 	case err != nil:
 		s.internal(w, "save account", err)
@@ -359,6 +422,45 @@ func (s *Server) callback(w http.ResponseWriter, r *http.Request) {
 }
 
 var errWrongAccount = errors.New("wrong account")
+
+// stProvider is the provider a connect state was started for; a state from
+// before the field existed is Google's.
+func stProvider(st store.ConnectState) string {
+	if st.Provider == "" {
+		return ProviderGoogle
+	}
+	return st.Provider
+}
+
+// accountProvider is an account's provider; the zero value is Google.
+func accountProvider(a store.Account) string {
+	if a.Provider == "" {
+		return ProviderGoogle
+	}
+	return a.Provider
+}
+
+// providerLabel is a provider's display name, or its raw name when no adapter
+// is registered for it (a provider switched off in config).
+func providerLabel(r *Registry, name string) string {
+	if ad, err := r.Get(name); err == nil {
+		return ad.Label()
+	}
+	if name == ProviderMicrosoft {
+		return "Microsoft"
+	}
+	return strings.ToUpper(name[:1]) + name[1:]
+}
+
+// adminConsentAnswer is what the administrator sees after approving (or not)
+// on the Microsoft consent screen.
+func (s *Server) adminConsentAnswer(w http.ResponseWriter, q url.Values) {
+	if strings.EqualFold(q.Get("admin_consent"), "true") {
+		s.failWith(w, http.StatusOK, "moose is approved", "Your organization's administrator approved moose. The person connecting a mailbox can now connect it again from the moose accounts page.", PagePath, "Go to moose accounts")
+		return
+	}
+	s.failWith(w, http.StatusOK, "moose was not approved", "The administrator consent was not granted, so people in this organization still cannot connect. Nothing was changed.", PagePath, "Go to moose accounts")
+}
 
 // writeCredential stores a freshly sealed credential, re-reading the version
 // and trying once more if another writer (a token refresh) got there first.
@@ -388,20 +490,25 @@ func mergeMailGrant(have map[string]store.ServiceGrant, scopes []string, now tim
 
 // saveAccount creates the account or reattaches the same Google identity to its
 // existing one, so a reconnect keeps the id, colour and nickname.
-func (s *Server) saveAccount(ctx context.Context, owner string, st store.ConnectState, p Profile, refresh string) (store.Account, error) {
-	uid := strings.ToLower(strings.TrimSpace(p.Address))
+func (s *Server) saveAccount(ctx context.Context, owner string, ad Adapter, st store.ConnectState, p Profile, refresh string, allScopes, mailScopes []string) (store.Account, error) {
+	name := ad.Name()
+	uid := p.ProviderUID
+	if uid == "" {
+		uid = strings.ToLower(strings.TrimSpace(p.Address))
+	}
 	accts, err := s.d.Store.ListAccounts(ctx, owner)
 	if err != nil {
 		return store.Account{}, err
 	}
 	var existing *store.Account
 	for i := range accts {
-		if accts[i].ProviderUID == uid {
+		if accts[i].ProviderUID == uid && accountProvider(accts[i]) == name {
 			existing = &accts[i]
 		}
 	}
-	if existing == nil {
-		if a, err := s.d.Store.FindAccountByAddress(ctx, owner, p.Address); err == nil {
+	if existing == nil && p.ProviderUID == "" {
+		// Only an identity that is the address itself can be matched by address.
+		if a, err := s.d.Store.FindAccountByAddress(ctx, owner, p.Address); err == nil && accountProvider(a) == name {
 			existing = &a
 		}
 	}
@@ -411,12 +518,11 @@ func (s *Server) saveAccount(ctx context.Context, owner string, st store.Connect
 			return store.Account{}, fmt.Errorf("account %s is no longer connected", st.ReconnectID)
 		}
 		if existing == nil || existing.ID != target.ID {
-			return store.Account{}, fmt.Errorf("%w: you signed in to Google as %s, but %s (%s) belongs to a different mailbox. Nothing was changed.",
-				errWrongAccount, p.Address, target.Nickname, target.Address)
+			return store.Account{}, fmt.Errorf("%w: you signed in to %s as %s, but %s (%s) belongs to a different mailbox. Nothing was changed.",
+				errWrongAccount, ad.Label(), p.Address, target.Nickname, target.Address)
 		}
 	}
 	now := s.d.Now().UTC()
-	scopes := []string{ScopeReadonly, ScopeCompose}
 	if existing != nil {
 		sealed, err := s.d.Seal.Seal(ctx, []byte(refresh), envelope.Context{Owner: owner, AccountID: existing.ID})
 		if err != nil {
@@ -430,8 +536,8 @@ func (s *Server) saveAccount(ctx context.Context, owner string, st store.Connect
 		}
 		patch := store.AccountPatch{
 			Status: store.Ptr(store.StatusOK), LastError: store.Ptr(""),
-			Address: store.Ptr(p.Address), ProviderUID: store.Ptr(uid), Caps: store.Ptr(p.Caps), Scopes: store.Ptr(scopes),
-			Services: store.Ptr(mergeMailGrant(existing.Services, scopes, now)),
+			Address: store.Ptr(p.Address), ProviderUID: store.Ptr(uid), Caps: store.Ptr(p.Caps), Scopes: store.Ptr(allScopes),
+			Services: store.Ptr(mergeMailGrant(existing.Services, mailScopes, now)),
 		}
 		if p.DisplayName != "" {
 			patch.DisplayName = store.Ptr(p.DisplayName)
@@ -442,9 +548,10 @@ func (s *Server) saveAccount(ctx context.Context, owner string, st store.Connect
 		return s.d.Store.GetAccount(ctx, owner, existing.ID)
 	}
 	a := store.Account{
-		Owner: owner, ID: store.NewAccountID(), Provider: store.ProviderGoogle, ProviderUID: uid, Address: p.Address,
+		Owner: owner, ID: store.NewAccountID(), Provider: name, ProviderUID: uid, Address: p.Address,
 		DisplayName: p.DisplayName, ColorIndex: len(accts), Status: store.StatusOK,
-		SendEnabled: false, HourlyCap: store.DefaultHourlyCap, Caps: p.Caps, Scopes: scopes,
+		SendEnabled: false, HourlyCap: store.DefaultHourlyCap, Caps: p.Caps, Scopes: allScopes,
+		Services:  mergeMailGrant(nil, mailScopes, now),
 		IsDefault: len(accts) == 0, Created: now, Updated: now,
 	}
 	if a.RefreshToken, err = s.d.Seal.Seal(ctx, []byte(refresh), envelope.Context{Owner: owner, AccountID: a.ID}); err != nil {

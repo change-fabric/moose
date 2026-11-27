@@ -26,6 +26,19 @@ func sendError(ctx context.Context, err error) *sdk.CallToolResult {
 	return mcpkit.ErrorResult(ctx, "internal", "the send request failed")
 }
 
+// refuseReadOnly refuses a send request or an enable on an account whose
+// provider is read-only, so no approval is asked for something that cannot happen.
+func (d Deps) refuseReadOnly(ctx context.Context, a store.Account) *sdk.CallToolResult {
+	if d.Providers == nil {
+		return nil
+	}
+	p, err := d.provider(ctx, a)
+	if err != nil {
+		return d.providerError(ctx, err)
+	}
+	return readOnlyRefusal(ctx, p, a)
+}
+
 func (d Deps) needSend(ctx context.Context) *sdk.CallToolResult {
 	if d.Send == nil {
 		return mcpkit.ErrorResult(ctx, "internal", "sending is not configured on this server")
@@ -111,6 +124,9 @@ func (d Deps) requestSend(ctx context.Context, req *sdk.CallToolRequest, in Requ
 				fmt.Sprintf("draft %s belongs to another account than %s; a request holds drafts from one account only", id, a.Address)), RequestSendOut{}, nil
 		}
 		raw = append(raw, rawID)
+	}
+	if bad := d.refuseReadOnly(ctx, a); bad != nil {
+		return bad, RequestSendOut{}, nil
 	}
 	ctx, cancel := context.WithTimeout(ctx, 25*time.Second)
 	defer cancel()
@@ -250,6 +266,11 @@ func (d Deps) enableSend(ctx context.Context, req *sdk.CallToolRequest, in Enabl
 	if !sendflow.FromMatches(a, in.FromAddress) {
 		return mcpkit.ErrorResult(ctx, sendflow.CodeFromMismatch,
 			"from_address "+quote(in.FromAddress)+" is not the address of account "+a.ID+" ("+a.Address+"); restate the account's exact address"), EnableSendOut{}, nil
+	}
+	if in.Enable {
+		if bad := d.refuseReadOnly(ctx, a); bad != nil {
+			return bad, EnableSendOut{}, nil
+		}
 	}
 	ctx, cancel := context.WithTimeout(ctx, 25*time.Second)
 	defer cancel()

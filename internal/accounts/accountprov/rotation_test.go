@@ -410,3 +410,70 @@ func TestGoogleWithoutRotationWritesNothing(t *testing.T) {
 		t.Fatalf("version = %d, want 0: an unchanged refresh token must not be rewritten", got.Version)
 	}
 }
+
+// A Microsoft account yields the Graph mail client, which reads with the
+// bearer token the refresh produced and reports read-only capabilities.
+func TestMicrosoftAccountsGetTheGraphClient(t *testing.T) {
+	f := newMSFixture(t, grants(split(mailScopes), nil))
+	f.ms.consent(mailScopes, baseScopes)
+	var auth string
+	graphSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		auth = r.Header.Get("Authorization")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"value":[{"id":"AAFolderInbox=","displayName":"Inbox"}]}`))
+	}))
+	defer graphSrv.Close()
+	f.src.GraphBaseURL = graphSrv.URL
+
+	p, err := f.src.Provider(context.Background(), f.acct)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if caps := p.Capabilities(); caps.SearchDialect != provider.DialectGraph || !caps.ReadOnly {
+		t.Fatalf("capabilities = %+v, want read-only Graph", caps)
+	}
+	boxes, err := p.ListMailboxes(context.Background())
+	if err != nil || len(boxes) == 0 {
+		t.Fatalf("ListMailboxes = %v, %v", boxes, err)
+	}
+	if !strings.HasPrefix(auth, "Bearer at-") {
+		t.Errorf("Graph saw Authorization %q, want the refreshed token", auth)
+	}
+	if _, err := p.CreateDraft(context.Background(), provider.DraftInput{Raw: []byte("x")}); !errors.Is(err, provider.ErrUnsupported) {
+		t.Errorf("CreateDraft = %v, want ErrUnsupported", err)
+	}
+}
+
+// Decision 11: a revoked credential at the token endpoint and a claims
+// challenge from Graph both surface as provider.ErrAuth.
+func TestMicrosoftAuthFailuresMapToErrAuth(t *testing.T) {
+	f := newMSFixture(t, grants(split(mailScopes), nil))
+	f.ms.failWith = `{"error":"interaction_required","error_description":"AADSTS50076: MFA required"}`
+	p, err := f.src.Provider(context.Background(), f.acct)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := p.ListMailboxes(context.Background()); !errors.Is(err, provider.ErrAuth) {
+		t.Fatalf("revoked credential = %v, want ErrAuth", err)
+	}
+	if got, _ := f.st.GetAccount(context.Background(), "pat", "acc_ms"); got.Status != store.StatusNeedsReauth {
+		t.Errorf("status = %s, want needs_reauth", got.Status)
+	}
+
+	g := newMSFixture(t, grants(split(mailScopes), nil))
+	g.ms.consent(mailScopes, baseScopes)
+	graphSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("WWW-Authenticate", `Bearer realm="", authorization_uri="https://login.microsoftonline.com/common/oauth2/authorize", error="insufficient_claims", claims="eyJhY2Nlc3NfdG9rZW4iOnt9fQ=="`)
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(`{"error":{"code":"InvalidAuthenticationToken","message":"Continuous access evaluation resulted in challenge"}}`))
+	}))
+	defer graphSrv.Close()
+	g.src.GraphBaseURL = graphSrv.URL
+	p, err = g.src.Provider(context.Background(), g.acct)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := p.ListMailboxes(context.Background()); !errors.Is(err, provider.ErrAuth) {
+		t.Fatalf("claims challenge = %v, want ErrAuth", err)
+	}
+}

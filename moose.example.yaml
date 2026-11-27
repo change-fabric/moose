@@ -29,6 +29,12 @@ drive:
 # moose-email (not deployed yet; uncomment when running it)
 # email:
 #   provider: gmail
+#   providers: [google]      # google and/or microsoft, at least one (default [google])
+#   microsoft:
+#     enabled: false         # off in prod until Graph drafts and send land and the acceptance run is recorded
+#     client_id: ""           # Entra app (client) id (MOOSE_MICROSOFT_CLIENT_ID)
+#     client_secret_ref: ""   # Secrets Manager secret, JSON {client_secret} or bare (MOOSE_MICROSOFT_OAUTH_SECRET_ARN)
+#                            # in dev: MOOSE_MICROSOFT_CLIENT_SECRET
 #   send:
 #     live: false            # stays false until an end-to-end approval is verified
 #   base_url: https://moose.example.org   # turns on /connect/google (MOOSE_EMAIL_BASE_URL)

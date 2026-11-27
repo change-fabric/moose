@@ -572,6 +572,8 @@ func (d Deps) single(ctx context.Context, req *sdk.CallToolRequest, id string) (
 	case store.StatusOK:
 	case store.StatusNeedsReauth:
 		return store.Account{}, nil, "", mcpkit.ErrorResult(ctx, "needs_reauth", acct.Address+" needs to be reconnected on the moose accounts page")
+	case store.StatusProviderDisabled:
+		return store.Account{}, nil, "", mcpkit.ErrorResult(ctx, "provider_disabled", acct.Address+" belongs to a provider that is turned off on this server; its credentials are kept")
 	default:
 		return store.Account{}, nil, "", mcpkit.ErrorResult(ctx, "account_unavailable", fmt.Sprintf("%s is %s", acct.Address, acct.Status))
 	}
@@ -592,6 +594,8 @@ func (d Deps) providerError(ctx context.Context, err error) *sdk.CallToolResult 
 		return mcpkit.ErrorResult(ctx, "not_found", "the provider has no such message or thread in that account")
 	case errors.Is(err, provider.ErrAuth):
 		return mcpkit.ErrorResult(ctx, "needs_reauth", "this account needs to be reconnected on the moose accounts page")
+	case errors.Is(err, provider.ErrUnsupported):
+		return mcpkit.ErrorResult(ctx, provider.CodeUnsupportedForProvider, "this account's provider does not support that yet")
 	case errors.Is(err, provider.ErrRateLimited):
 		return mcpkit.ErrorResult(ctx, "rate_limited", "the provider is limiting requests for this account; try again shortly")
 	case errors.Is(err, context.DeadlineExceeded):

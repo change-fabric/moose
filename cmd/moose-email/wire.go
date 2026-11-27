@@ -14,6 +14,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
@@ -21,6 +22,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/kms"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/secretsmanager"
+	"golang.org/x/oauth2"
 
 	"github.com/change-fabric/moose/internal/accounts/accountprov"
 	"github.com/change-fabric/moose/internal/accounts/connect"
@@ -44,10 +46,16 @@ type mount struct {
 // secretFunc reads a Secrets Manager secret.
 type secretFunc func(ctx context.Context, arn string) ([]byte, error)
 
-// wiring is everything the Google connect page and the OAuth server need, built
-// from config.
+// wiring is everything the connect page and the OAuth server need, built from
+// config.
 type wiring struct {
-	store   store.Store
+	// store is the real account store: the connect page, token refresh and the
+	// OAuth server use it and see every account's true status.
+	store store.Store
+	// tools is store with accounts of a switched-off provider reading as
+	// provider_disabled. The MCP tools and the send engine use it, so those
+	// accounts are hidden from every tool while their credentials are kept.
+	tools   store.Store
 	connect *connect.Server
 	// oauth is nil unless the email: section configures the OAuth server.
 	oauth *oauthas.Server
@@ -111,16 +119,12 @@ func buildConnect(ctx context.Context, cfg config.Config, log *slog.Logger, load
 	}
 
 	var secret secretFunc
-	if e.GoogleSecretARN != "" {
+	if e.GoogleSecretARN != "" || (e.MicrosoftEnabled() && e.Microsoft.ClientSecretRef != "") {
 		ac, err := needAWS()
 		if err != nil {
 			return fail(err)
 		}
 		secret = secretsManager(secretsmanager.NewFromConfig(ac))
-	}
-	id, sec, err := googleCredentials(ctx, *e, secret)
-	if err != nil {
-		return fail(err)
 	}
 
 	var auth connect.Authenticator = connect.SessionAuth{Store: st}
@@ -132,7 +136,10 @@ func buildConnect(ctx context.Context, cfg config.Config, log *slog.Logger, load
 	if err != nil {
 		return fail(err)
 	}
-	google := connect.GoogleConfig(id, sec, e.BaseURL)
+	adapters, configs, google, err := buildAdapters(ctx, *e, secret)
+	if err != nil {
+		return fail(err)
+	}
 	// The service client exists only where the OAuth server does: both need the
 	// HMAC key shared with the approval service. Without it, Enable send says
 	// it is unavailable.
@@ -148,22 +155,27 @@ func buildConnect(ctx context.Context, cfg config.Config, log *slog.Logger, load
 		client = &api.Client{BaseURL: serviceBase(*e), Secret: key}
 		enableAp = sendflow.ConnectApprover{Approver: client}
 	}
-	srv, err := connect.New(connect.Deps{
-		Store: st, Seal: seal, OAuth: google,
-		Profile: connect.GmailProfile(), Auth: auth, Approver: enableAp,
+	deps := connect.Deps{
+		Store: st, Seal: seal, Adapters: adapters, Auth: auth, Approver: enableAp,
 		BaseURL: e.BaseURL, InsecureCookies: base.Scheme != "https", Log: log,
-	})
+	}
+	if google != nil {
+		deps.OAuth, deps.Profile = google, connect.GmailProfile()
+	}
+	srv, err := connect.New(deps)
 	if err != nil {
 		return fail(err)
 	}
-	w := &wiring{store: st, connect: srv, providers: &accountprov.Source{Store: st, Seal: seal, OAuth: google}}
+	gated := store.GateProviders(st, enabledProviders(*e))
+	w := &wiring{store: st, tools: gated, connect: srv,
+		providers: &accountprov.Source{Store: st, Seal: seal, OAuth: google, Configs: configs, Log: log}}
 	var cursorBase []byte
 	if e.OAuthEnabled() {
 		if w.oauth, err = buildOAuth(*e, key, st, seal, log, base.Scheme != "https"); err != nil {
 			return fail(err)
 		}
 		w.send = &sendflow.Service{
-			Store: st, Seal: seal, Approver: client, Providers: w.providers,
+			Store: gated, Seal: seal, Approver: client, Providers: w.providers,
 			ReceiptKey: []byte(e.ReceiptPublicKey), RPID: e.RPID, Live: e.Send.Live, Log: log,
 		}
 		cursorBase = key
@@ -179,6 +191,46 @@ func buildConnect(ctx context.Context, cfg config.Config, log *slog.Logger, load
 	}
 	w.cursorKey = deriveKey(cursorBase, "moose-email/search-cursor/v1")
 	return w, nil
+}
+
+// enabledProviders reports which providers are on: Google when email.providers
+// lists it, Microsoft when it is listed and email.microsoft.enabled is true.
+func enabledProviders(e config.Email) func(provider string) bool {
+	return func(p string) bool {
+		switch p {
+		case store.ProviderGoogle:
+			return e.HasProvider(config.MailProviderGoogle)
+		case store.ProviderMicrosoft:
+			return e.MicrosoftEnabled()
+		}
+		return false
+	}
+}
+
+// buildAdapters registers one connect adapter per enabled provider in
+// email.providers and returns the OAuth client of each for token refresh. The
+// Google client is returned on its own too: it is the connect page's built-in
+// provider, nil when Google is not offered.
+func buildAdapters(ctx context.Context, e config.Email, secret secretFunc) (adapters []connect.Adapter, configs map[string]*oauth2.Config, google *oauth2.Config, err error) {
+	configs = map[string]*oauth2.Config{}
+	if e.HasProvider(config.MailProviderGoogle) {
+		id, sec, err := googleCredentials(ctx, e, secret)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		google = connect.GoogleConfig(id, sec, e.BaseURL)
+		configs[store.ProviderGoogle] = google
+	}
+	if e.MicrosoftEnabled() {
+		id, sec, err := microsoftCredentials(ctx, e, secret)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		ms := connect.MicrosoftConfig(id, sec, e.BaseURL)
+		adapters = append(adapters, connect.NewMicrosoftAdapter(ms))
+		configs[store.ProviderMicrosoft] = ms
+	}
+	return adapters, configs, google, nil
 }
 
 // approverKey returns the HMAC key shared with the approver's service API, from
@@ -297,6 +349,37 @@ func googleCredentials(ctx context.Context, e config.Email, secret secretFunc) (
 		return "", "", errors.New("google oauth secret lacks client_id or client_secret")
 	}
 	return v.ClientID, v.ClientSecret, nil
+}
+
+// microsoftCredentials returns the Entra app's client id (email.microsoft.client_id)
+// and secret, from the Secrets Manager secret client_secret_ref names (JSON
+// {"client_secret": ...}, or the bare secret) or, in dev, from the environment.
+func microsoftCredentials(ctx context.Context, e config.Email, secret secretFunc) (id, sec string, err error) {
+	m := e.Microsoft
+	if m.ClientSecretRef == "" {
+		return m.ClientID, m.ClientSecret, nil
+	}
+	if secret == nil {
+		return "", "", errors.New("microsoft oauth secret: no secret reader")
+	}
+	raw, err := secret(ctx, m.ClientSecretRef)
+	if err != nil {
+		return "", "", fmt.Errorf("microsoft oauth secret: %w", err)
+	}
+	sec = strings.TrimSpace(string(raw))
+	if strings.HasPrefix(sec, "{") {
+		var v struct {
+			ClientSecret string `json:"client_secret"`
+		}
+		if err := json.Unmarshal(raw, &v); err != nil {
+			return "", "", errors.New("microsoft oauth secret is not JSON with client_secret")
+		}
+		sec = v.ClientSecret
+	}
+	if sec == "" {
+		return "", "", errors.New("microsoft oauth secret has no client_secret")
+	}
+	return m.ClientID, sec, nil
 }
 
 func defaultAWS(ctx context.Context) (aws.Config, error) { return awsconfig.LoadDefaultConfig(ctx) }
