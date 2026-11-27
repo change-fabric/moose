@@ -180,4 +180,6 @@ type Provider interface {
 	// SendDraft delivers exactly raw. It never re-reads a draft, so an approved
 	// snapshot is what goes out.
 	SendDraft(ctx context.Context, raw []byte, threadID string) (SentMessage, error)
+	// DeleteDraft removes a draft. A missing draft is ErrNotFound.
+	DeleteDraft(ctx context.Context, id string) error
 }

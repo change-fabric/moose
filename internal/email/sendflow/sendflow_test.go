@@ -534,14 +534,15 @@ func TestRequestingTheSameDraftAgainReturnsTheSameRequest(t *testing.T) {
 	if a.RequestID != b.RequestID || r.ap.Creates != 1 {
 		t.Fatalf("%s vs %s, creates %d", a.RequestID, b.RequestID, r.ap.Creates)
 	}
-	// After it is sent, asking again does not make a second send.
+	// After it is sent the draft is discarded, so asking again finds no draft
+	// and makes no second send.
 	r.ap.Approve(a.RequestID)
 	r.status(a.RequestID)
-	c := r.request(id)
-	if c.RequestID != a.RequestID || c.Status != store.SendSent {
-		t.Fatalf("after sent: %+v", c)
+	_, err := r.svc.RequestSend(ctx, sendflow.RequestIn{Account: r.acct, FromAddress: r.acct.Address, DraftIDs: []string{id}})
+	if err == nil || !strings.Contains(err.Error(), "draft_not_found") {
+		t.Fatalf("after sent: err = %v, want draft_not_found", err)
 	}
-	if r.status(c.RequestID); len(r.prov.SentMessages()) != 1 {
+	if r.status(a.RequestID); len(r.prov.SentMessages()) != 1 {
 		t.Fatal("sent twice")
 	}
 }
@@ -783,14 +784,14 @@ func TestOutcomesAndSnapshotRetention(t *testing.T) {
 		d := r.draft("a@example.com", "s", "b")
 		id := r.approved(d)
 		out := r.status(id)
-		if out.Status != store.SendSent || out.ProviderMessageID == "" || !out.SourceDraftRetained || out.SourceDraftID != d {
+		if out.Status != store.SendSent || out.ProviderMessageID == "" || out.SourceDraftRetained || out.SourceDraftID != "" {
 			t.Fatalf("%+v", out)
 		}
 		if !snapshotGone(r, id) {
 			t.Error("the snapshot must be deleted after sent")
 		}
-		if _, err := r.prov.GetDraftRaw(ctx, d); err != nil {
-			t.Errorf("the source draft must remain: %v", err)
+		if _, err := r.prov.GetDraftRaw(ctx, d); !errors.Is(err, provider.ErrNotFound) {
+			t.Errorf("the unchanged source draft must be discarded after sent: %v", err)
 		}
 		if row, _ := r.st.GetSend(ctx, id); row.ProviderMessageID != out.ProviderMessageID {
 			t.Errorf("the provider message id must be persisted with sent: %+v", row)

@@ -142,7 +142,7 @@ func (d Deps) registerSendStatus(s *sdk.Server) {
 			"sent, failed, unknown (it is not known whether the message left; check the Sent folder, it is never retried), would_send (approved, but live sending is switched off), " +
 			"denied or expired. pending means the approval is still waiting; blocked, rate_limited and already_claimed explain why nothing was sent yet. " +
 			"The message sent is the exact snapshot the owner approved, never the draft as it is now, and it is sent at most once. " +
-			"The source draft stays in the mailbox after a send. Pass a batch's request_id to carry out every message in it. " + WriteGuidance,
+			"After a send the source draft is deleted, unless it was edited after approval; then it is kept and source_draft_retained names it. Pass a batch's request_id to carry out every message in it. " + WriteGuidance,
 		InputSchema: &jsonschema.Schema{
 			Type:     "object",
 			Required: []string{"request_id"},

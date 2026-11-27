@@ -324,6 +324,19 @@ func (p *Provider) GetDraftRaw(_ context.Context, id string) ([]byte, error) {
 	return append([]byte(nil), d.raw...), nil
 }
 
+func (p *Provider) DeleteDraft(_ context.Context, id string) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.Err != nil {
+		return p.Err
+	}
+	if _, ok := p.drafts[id]; !ok {
+		return fmt.Errorf("%w: draft %s", provider.ErrNotFound, id)
+	}
+	delete(p.drafts, id)
+	return nil
+}
+
 func (p *Provider) SendDraft(_ context.Context, raw []byte, threadID string) (provider.SentMessage, error) {
 	p.mu.Lock()
 	if p.Err != nil {
