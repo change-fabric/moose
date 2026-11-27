@@ -20,7 +20,7 @@ import (
 	"strings"
 	"time"
 
-	estore "github.com/change-fabric/moose/internal/email/store"
+	estore "github.com/change-fabric/moose/internal/accounts/store"
 )
 
 // Kinds, shared with moose-email's store.

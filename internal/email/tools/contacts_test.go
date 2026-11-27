@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/change-fabric/moose/internal/accounts/store"
 	"github.com/change-fabric/moose/internal/email/sendflow"
-	"github.com/change-fabric/moose/internal/email/store"
 	"github.com/change-fabric/moose/internal/email/tools"
 )
 

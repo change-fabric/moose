@@ -7,10 +7,10 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/change-fabric/moose/internal/accounts/connect"
+	"github.com/change-fabric/moose/internal/accounts/store"
 	"github.com/change-fabric/moose/internal/approver/api"
 	"github.com/change-fabric/moose/internal/approver/receipt"
-	"github.com/change-fabric/moose/internal/email/connect"
-	"github.com/change-fabric/moose/internal/email/store"
 )
 
 // ConnectApprover adapts the approver client to connect.Approver, so the

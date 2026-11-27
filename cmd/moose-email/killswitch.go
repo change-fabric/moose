@@ -11,8 +11,8 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 
+	"github.com/change-fabric/moose/internal/accounts/store"
 	"github.com/change-fabric/moose/internal/config"
-	"github.com/change-fabric/moose/internal/email/store"
 )
 
 // runKillSwitch implements `moose-email kill-switch on [reason] | off | status`.

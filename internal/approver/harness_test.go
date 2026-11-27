@@ -17,14 +17,14 @@ import (
 
 	"github.com/go-webauthn/webauthn/protocol"
 
+	"github.com/change-fabric/moose/internal/accounts/envelope"
+	"github.com/change-fabric/moose/internal/accounts/store/sqlite"
 	"github.com/change-fabric/moose/internal/approver/api"
 	"github.com/change-fabric/moose/internal/approver/pages"
 	"github.com/change-fabric/moose/internal/approver/receipt"
 	"github.com/change-fabric/moose/internal/approver/store"
 	"github.com/change-fabric/moose/internal/approver/webauthn"
 	"github.com/change-fabric/moose/internal/approver/webauthn/webauthntest"
-	"github.com/change-fabric/moose/internal/email/envelope"
-	"github.com/change-fabric/moose/internal/email/store/sqlite"
 )
 
 const (

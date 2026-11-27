@@ -5,9 +5,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/change-fabric/moose/internal/accounts/store"
 	"github.com/change-fabric/moose/internal/approver/api"
 	"github.com/change-fabric/moose/internal/email/sendflow"
-	"github.com/change-fabric/moose/internal/email/store"
 )
 
 // offAccount returns the rig's account with sending off.

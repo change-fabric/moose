@@ -15,9 +15,9 @@ import (
 	"golang.org/x/oauth2"
 	"google.golang.org/api/option"
 
-	"github.com/change-fabric/moose/internal/email/connect"
-	"github.com/change-fabric/moose/internal/email/envelope"
-	"github.com/change-fabric/moose/internal/email/store"
+	"github.com/change-fabric/moose/internal/accounts/connect"
+	"github.com/change-fabric/moose/internal/accounts/envelope"
+	"github.com/change-fabric/moose/internal/accounts/store"
 	"github.com/change-fabric/moose/internal/email/tools"
 )
 

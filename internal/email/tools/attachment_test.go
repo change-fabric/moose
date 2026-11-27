@@ -12,11 +12,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/change-fabric/moose/internal/accounts/store"
 	"github.com/change-fabric/moose/internal/email/attach"
 	"github.com/change-fabric/moose/internal/email/attach/attachtest"
 	"github.com/change-fabric/moose/internal/email/fake"
 	"github.com/change-fabric/moose/internal/email/provider"
-	"github.com/change-fabric/moose/internal/email/store"
 	"github.com/change-fabric/moose/internal/email/tools"
 	"github.com/change-fabric/moose/internal/textextract"
 )

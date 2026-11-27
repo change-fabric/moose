@@ -11,10 +11,11 @@ import (
 
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/change-fabric/moose/internal/accounts/fanout"
+	"github.com/change-fabric/moose/internal/accounts/store"
 	"github.com/change-fabric/moose/internal/email/attach"
 	"github.com/change-fabric/moose/internal/email/provider"
 	"github.com/change-fabric/moose/internal/email/sendflow"
-	"github.com/change-fabric/moose/internal/email/store"
 )
 
 // Tool names.
@@ -80,7 +81,7 @@ type Deps struct {
 	// a cursor issued by one Lambda container is rejected by another.
 	CursorKey []byte
 	// Fanout overrides the fan-out limits; zero fields take the defaults.
-	Fanout Limits
+	Fanout fanout.Limits
 	Now    func() time.Time
 	// Sleep waits between 429 retries; nil uses a context-aware timer.
 	Sleep func(ctx context.Context, d time.Duration) error
@@ -94,7 +95,7 @@ func Register(s *sdk.Server, d Deps) {
 	if d.Sleep == nil {
 		d.Sleep = sleepCtx
 	}
-	d.Fanout = d.Fanout.withDefaults()
+	d.Fanout = d.Fanout.WithDefaults()
 	if len(d.CursorKey) == 0 {
 		// Cursors then only survive within this process, which suits local development.
 		d.CursorKey = make([]byte, 32)

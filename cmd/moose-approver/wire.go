@@ -18,16 +18,16 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/kms"
 	"github.com/aws/aws-sdk-go-v2/service/secretsmanager"
 
+	"github.com/change-fabric/moose/internal/accounts/envelope"
+	estore "github.com/change-fabric/moose/internal/accounts/store"
+	emaildynamo "github.com/change-fabric/moose/internal/accounts/store/dynamo"
+	emailsqlite "github.com/change-fabric/moose/internal/accounts/store/sqlite"
 	"github.com/change-fabric/moose/internal/approver/api"
 	"github.com/change-fabric/moose/internal/approver/pages"
 	"github.com/change-fabric/moose/internal/approver/receipt"
 	"github.com/change-fabric/moose/internal/approver/store"
 	"github.com/change-fabric/moose/internal/approver/webauthn"
 	"github.com/change-fabric/moose/internal/config"
-	"github.com/change-fabric/moose/internal/email/envelope"
-	estore "github.com/change-fabric/moose/internal/email/store"
-	emaildynamo "github.com/change-fabric/moose/internal/email/store/dynamo"
-	emailsqlite "github.com/change-fabric/moose/internal/email/store/sqlite"
 )
 
 // wiring is everything the approver serves with, built from config.

@@ -14,13 +14,12 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 
+	"github.com/change-fabric/moose/internal/accounts/connect"
 	"github.com/change-fabric/moose/internal/approver/receipt"
 	"github.com/change-fabric/moose/internal/config"
-	"github.com/change-fabric/moose/internal/email/connect"
 )
 
 var quiet = slog.New(slog.NewTextHandler(io.Discard, nil))
-
 
 // noRedirect reports a redirect instead of following it.
 var noRedirect = &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}

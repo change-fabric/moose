@@ -60,11 +60,14 @@ Drive-specific code lives under `internal/drive`; shared packages stay at the to
 | `internal/email/provider` | Provider-neutral mailbox interface, search `Query`, `Capabilities` |
 | `internal/email/gmail` | Gmail provider: query compiler and REST client |
 | `internal/email/fake` | In-memory provider for tests |
-| `internal/email/store` | Email store: accounts, OAuth state, approvals, send ledger, per-account contacts, audit. Business rules once on a small `Backend`; `dynamo` and `sqlite` backends, `storetest` conformance suites |
-| `internal/email/envelope` | KMS envelope sealing (encryption context `{owner, account_id}`) with a local dev-key mode |
-| `internal/email/connect` | The `/connect/google` page: Google OAuth web flow, account rows, send enable and disable |
-| `internal/email/oauthas` | Hand-rolled OAuth 2.1 authorization server for the public `/mcp`: DCR, authorization code with PKCE S256, opaque tokens, rotating refresh. Login is a passkey sign-in on a phone (QR interstitial); `/mcp` sits behind `auth.RequireBearerToken` |
-| `internal/email/palette` | The 12 curated account colours (every pair at CIE76 deltaE 20 or more under protan, deutan and tritan) |
+| `internal/accounts/store` | Email store: accounts, OAuth state, approvals, send ledger, per-account contacts, audit. Business rules once on a small `Backend`; `dynamo` and `sqlite` backends, `storetest` conformance suites |
+| `internal/accounts/envelope` | KMS envelope sealing (encryption context `{owner, account_id}`) with a local dev-key mode |
+| `internal/accounts/connect` | The `/connect/google` page: OAuth web flow through a provider `Adapter` registry (only Google registered), account rows, send enable and disable |
+| `internal/accounts/accountprov` | Builds a provider client for a stored account: unseals the credential and refreshes tokens |
+| `internal/accounts/fanout` | Account reference resolver (`Resolve`) and the bounded multi-account fan-out with signed paging cursors |
+| `internal/oauthas` | Hand-rolled OAuth 2.1 authorization server for the public `/mcp`: DCR, authorization code with PKCE S256, opaque tokens, rotating refresh. Login is a passkey sign-in on a phone (QR interstitial); `/mcp` sits behind `auth.RequireBearerToken` |
+| `internal/accounts/palette` | The 12 curated account colours (every pair at CIE76 deltaE 20 or more under protan, deutan and tritan) |
+| `internal/htmltext` | HTML to plain text for message bodies |
 | `internal/approver/api` | moose-approver service API: HMAC-signed create (idempotent by key), status, consume; payload and preview types; the client moose-email uses |
 | `internal/approver/receipt` | KMS P-256 approval receipts and `Verify(pubkey, receipt, want)` |
 | `internal/approver/webauthn` | Passkey ceremonies: user verification required, single-use challenges bound to request and payload digest, hashed enrollment tokens; `webauthntest` is a virtual authenticator |

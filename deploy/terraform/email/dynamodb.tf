@@ -1,4 +1,4 @@
-# Both tables share the shape internal/email/store/dynamo expects: pk/sk, a
+# Both tables share the shape internal/accounts/store/dynamo expects: pk/sk, a
 # sparse g1-index on the lowercased address, and a ttl attribute.
 resource "aws_dynamodb_table" "email" {
   name                        = local.email_name

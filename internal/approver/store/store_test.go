@@ -18,12 +18,12 @@ import (
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	awsdynamodb "github.com/aws/aws-sdk-go-v2/service/dynamodb"
 
+	"github.com/change-fabric/moose/internal/accounts/envelope"
+	estore "github.com/change-fabric/moose/internal/accounts/store"
+	"github.com/change-fabric/moose/internal/accounts/store/dynamo"
+	"github.com/change-fabric/moose/internal/accounts/store/sqlite"
 	"github.com/change-fabric/moose/internal/approver/receipt"
 	"github.com/change-fabric/moose/internal/approver/store"
-	"github.com/change-fabric/moose/internal/email/envelope"
-	estore "github.com/change-fabric/moose/internal/email/store"
-	"github.com/change-fabric/moose/internal/email/store/dynamo"
-	"github.com/change-fabric/moose/internal/email/store/sqlite"
 )
 
 var t0 = time.Date(2026, 11, 24, 12, 0, 0, 0, time.UTC)

@@ -41,7 +41,7 @@ DDB_PORT ?= 18000
 test-store:
 	docker run -d --rm --name moose-ddb-test -p $(DDB_PORT):8000 $(DDB_IMAGE) >/dev/null && \
 	for i in $$(seq 1 60); do curl -s -o /dev/null http://localhost:$(DDB_PORT)/ && break; sleep 1; done && \
-	MOOSE_DYNAMO_ENDPOINT=http://localhost:$(DDB_PORT) $(GO) test -count=1 ./internal/store/... ./internal/email/store/... ./internal/approver/store/... ; \
+	MOOSE_DYNAMO_ENDPOINT=http://localhost:$(DDB_PORT) $(GO) test -count=1 ./internal/store/... ./internal/accounts/store/... ./internal/approver/store/... ; \
 	rc=$$?; docker stop moose-ddb-test >/dev/null; exit $$rc
 
 # modernc.org/mathutil is BSD-3-Clause, but its LICENSE wording defeats the go-licenses classifier.
@@ -120,7 +120,8 @@ AXE_IMAGE ?= ghcr.io/browserless/chromium:v2.38.1
 a11y-approver:
 	rm -rf dist/axe && mkdir -p dist/axe
 	MOOSE_AXE_DUMP=../../dist/axe $(GO) test -count=1 -run TestDumpPagesForAxe ./internal/approver/
-	MOOSE_AXE_DUMP=../../../dist/axe $(GO) test -count=1 -run TestDumpPagesForAxe ./internal/email/connect/ ./internal/email/oauthas/
+	MOOSE_AXE_DUMP=../../../dist/axe $(GO) test -count=1 -run TestDumpPagesForAxe ./internal/accounts/connect/
+	MOOSE_AXE_DUMP=../../dist/axe $(GO) test -count=1 -run TestDumpPagesForAxe ./internal/oauthas/
 	docker run --rm --entrypoint node -v "$(CURDIR)/dist/axe:/pages:ro" -v "$(CURDIR)/scripts/axe-pages.mjs:/axe-pages.mjs:ro" $(AXE_IMAGE) /axe-pages.mjs /pages
 
 relay-proxy:

@@ -10,12 +10,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/change-fabric/moose/internal/accounts/envelope"
+	"github.com/change-fabric/moose/internal/accounts/store"
+	"github.com/change-fabric/moose/internal/accounts/store/sqlite"
 	"github.com/change-fabric/moose/internal/approver/api"
-	"github.com/change-fabric/moose/internal/email/envelope"
 	"github.com/change-fabric/moose/internal/email/sendflow"
 	"github.com/change-fabric/moose/internal/email/sendflow/flowtest"
-	"github.com/change-fabric/moose/internal/email/store"
-	"github.com/change-fabric/moose/internal/email/store/sqlite"
 )
 
 func (r *rig) propose(addrs ...string) sendflow.TrustProposal {

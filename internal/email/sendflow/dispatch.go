@@ -9,12 +9,12 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/change-fabric/moose/internal/accounts/envelope"
+	"github.com/change-fabric/moose/internal/accounts/store"
 	"github.com/change-fabric/moose/internal/approver/api"
 	"github.com/change-fabric/moose/internal/approver/receipt"
-	"github.com/change-fabric/moose/internal/email/envelope"
 	"github.com/change-fabric/moose/internal/email/mailmsg"
 	"github.com/change-fabric/moose/internal/email/provider"
-	"github.com/change-fabric/moose/internal/email/store"
 )
 
 // Status values StatusOut.Status takes, beyond the ledger states (claimed is
