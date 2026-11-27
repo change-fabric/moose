@@ -59,6 +59,8 @@ Drive-specific code lives under `internal/drive`; shared packages stay at the to
 | `internal/mcpkit` | Shared MCP server construction, tool annotations, untrusted-content wrapper |
 | `internal/email/provider` | Provider-neutral mailbox interface, search `Query`, `Capabilities` |
 | `internal/email/gmail` | Gmail provider: query compiler and REST client |
+| `internal/email/graph` | Microsoft Graph provider, read side only (mailboxes, search, message, thread, attachments); unreachable until Phase 6 and off behind `email.microsoft.enabled=false` |
+| `internal/graphapi` | Shared Graph HTTP core: base URL, bearer auth, ImmutableId Prefer header, error and Retry-After mapping |
 | `internal/email/fake` | In-memory provider for tests |
 | `internal/accounts/store` | Email store: accounts, OAuth state, approvals, send ledger, per-account contacts, audit. Business rules once on a small `Backend`; `dynamo` and `sqlite` backends, `storetest` conformance suites |
 | `internal/accounts/envelope` | KMS envelope sealing (encryption context `{owner, account_id}`) with a local dev-key mode |
