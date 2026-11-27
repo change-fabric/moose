@@ -680,11 +680,11 @@ func (s *Server) queue(w http.ResponseWriter, r *http.Request) {
 		if p, err := api.ParsePayload(req.Kind, req.Payload); err == nil {
 			switch {
 			case p.Email != nil:
-				detail = fmt.Sprintf("%d recipients", len(p.Email.Recipients))
+				detail = count(len(p.Email.Recipients), "recipient")
 			case p.Batch != nil:
-				detail = fmt.Sprintf("%d messages", len(p.Batch.Items))
+				detail = count(len(p.Batch.Items), "message")
 			case p.Trust != nil:
-				detail = fmt.Sprintf("%d addresses", len(p.Trust.Changes))
+				detail = count(len(p.Trust.Changes), "address")
 			case p.Dashboard != nil:
 				detail = p.Dashboard.ClientName
 			}
