@@ -93,7 +93,8 @@ const script = `
   if (fromBtn) fromBtn.addEventListener("click", function () {
     fromBtn.disabled = true;
     send(base + "/from").then(function () {
-      fromBtn.hidden = true;
+      var step = $("from-step");
+      if (step) step.hidden = true;
       var d = $("decide");
       if (d) d.hidden = false;
       say("Sender confirmed. Approve with your passkey, or deny.");

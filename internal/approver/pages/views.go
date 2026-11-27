@@ -32,6 +32,8 @@ main{max-width:46rem;margin:0 auto;padding:1rem}
 h1{font-size:1.4rem;margin:.5rem 0 1rem}
 h2{font-size:1.15rem;margin:1.25rem 0 .5rem}
 .card{background:var(--card);border:1px solid var(--line);border-radius:.5rem;padding:1rem;margin:1rem 0}
+.card>:first-child{margin-top:0}
+.card>:last-child{margin-bottom:0}
 .banner{border-radius:.5rem;overflow:hidden;margin:1rem 0;border:2px solid var(--fg)}
 .banner .strip{height:.75rem;background-color:var(--fg);color:var(--card)}
 .banner .strip.pat-stripes{background-image:repeating-linear-gradient(45deg,var(--card) 0 .4rem,transparent .4rem .8rem)}
@@ -41,10 +43,11 @@ h2{font-size:1.15rem;margin:1.25rem 0 .5rem}
 .banner-body{display:flex;gap:1rem;align-items:center;padding:1rem}
 .monogram{flex:none;width:3.5rem;height:3.5rem;border-radius:50%;border:3px solid currentColor;display:flex;align-items:center;justify-content:center;font-size:1.75rem;font-weight:700}
 .eyebrow{margin:0;font-size:.875rem;text-transform:uppercase;letter-spacing:.06em}
-.nick{margin:0;font-size:2rem;line-height:1.15;overflow-wrap:anywhere}
+.nick{margin:0;font-size:clamp(1.4rem,7vw,2rem);line-height:1.15;overflow-wrap:break-word}
 .addr{margin:.25rem 0 0;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:1.1rem;overflow-wrap:anywhere}
 .addr .at{padding:0 .25rem;opacity:.85}
 .addr .domain{font-weight:700}
+.addr.lead{font-size:clamp(1.1rem,5.5vw,1.5rem)}
 .dn,.ctx{margin:.25rem 0 0}
 .lookalike{overflow-wrap:anywhere;background:var(--warn-bg);color:var(--warn-fg);border:2px solid var(--warn-fg);border-radius:.5rem;padding:.75rem 1rem;margin:1rem 0}
 .lookalike p{margin:.25rem 0}
@@ -57,6 +60,8 @@ pre.body{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border
 .chip{display:inline-block;border:1px solid var(--warn-fg);color:var(--warn-fg);background:var(--warn-bg);border-radius:1rem;padding:0 .6rem;font-size:.875rem;margin:.1rem .25rem .1rem 0}
 .sha{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.85rem;overflow-wrap:anywhere}
 .actions{display:flex;flex-wrap:wrap;gap:.75rem;margin:1rem 0}
+.actions.confirm{margin-bottom:.5rem}
+.actions.confirm button{width:100%;justify-content:center;min-height:3.25rem;font-size:1.1rem}
 button,.btn{min-height:2.75rem;min-width:2.75rem;padding:.5rem 1.1rem;font:inherit;font-weight:600;border-radius:.4rem;border:2px solid var(--fg);background:var(--card);color:var(--fg);cursor:pointer;text-decoration:none;display:inline-flex;align-items:center}
 button.danger{border-color:var(--bad);color:var(--bad)}
 button[hidden],[hidden]{display:none!important}
@@ -87,11 +92,16 @@ type bannerView struct {
 	Monogram     string
 	Region       string
 	LastSent     string
+	// ShowNick is false when the nickname is only the address fallback, so the
+	// address is shown once.
+	ShowNick     bool
 	Warnings     []Warning
 	ConfirmLabel string
 }
 
-func newBanner(pv api.Preview, address string, now time.Time) bannerView {
+// newBanner builds the FROM banner. The confirm label names the account and
+// the action the kind asks for.
+func newBanner(pv api.Preview, address, kind string, now time.Time) bannerView {
 	col := palette.At(pv.ColorIndex)
 	local, domain := address, ""
 	if i := strings.LastIndex(address, "@"); i >= 0 {
@@ -107,7 +117,8 @@ func newBanner(pv api.Preview, address string, now time.Time) bannerView {
 		Nickname: nick, Local: local, Domain: domain, DisplayName: pv.DisplayName, Monogram: mono,
 		Region:       fmt.Sprintf("Sending account: %s, %s, colour %s", nick, address, col.Name),
 		Warnings:     LookAlikes(Account{Nickname: nick, Address: address, DisplayName: pv.DisplayName}, pv.Siblings),
-		ConfirmLabel: fmt.Sprintf("Send from %s (%s)", nick, address),
+		ShowNick:     !sameAddress(nick, address),
+		ConfirmLabel: confirmLabel(kind, nick, address),
 	}
 	if pv.LastSent != nil && !pv.LastSent.At.IsZero() {
 		who := "recipients"
@@ -117,6 +128,21 @@ func newBanner(pv api.Preview, address string, now time.Time) bannerView {
 		v.LastSent = fmt.Sprintf("Last sent from this account %s ago to %d %s", since(now, pv.LastSent.At), pv.LastSent.Recipients, who)
 	}
 	return v
+}
+
+func sameAddress(a, b string) bool {
+	return strings.EqualFold(strings.TrimSpace(a), strings.TrimSpace(b))
+}
+
+func confirmLabel(kind, nick, address string) string {
+	who := address
+	if nick != "" && !sameAddress(nick, address) {
+		who = fmt.Sprintf("%s (%s)", nick, address)
+	}
+	if kind == api.KindAccountSendEnable {
+		return "Enable sending from " + who
+	}
+	return "Send from " + who
 }
 
 func indexOf(i int) int {
@@ -198,8 +224,8 @@ var pageTmpl = template.Must(template.New("page").Funcs(funcs).Parse(`{{define "
     <div class="monogram" aria-hidden="true">{{.Monogram}}</div>
     <div>
       <p class="eyebrow">Sending from &middot; {{.ColorName}}</p>
-      <p class="nick">{{.Nickname}}</p>
-      <p class="addr"><span class="local">{{.Local}}</span><span class="at">@</span><span class="domain">{{.Domain}}</span></p>
+      {{if .ShowNick}}<p class="nick">{{.Nickname}}</p>{{end}}
+      <p class="addr{{if not .ShowNick}} lead{{end}}"><span class="local">{{.Local}}</span><wbr><span class="at">@</span><span class="domain">{{.Domain}}</span></p>
       {{if .DisplayName}}<p class="dn">{{.DisplayName}}</p>{{end}}
       {{if .LastSent}}<p class="ctx">{{.LastSent}}</p>{{end}}
     </div>
@@ -257,7 +283,8 @@ var pageTmpl = template.Must(template.New("page").Funcs(funcs).Parse(`{{define "
 {{if .Pending}}
 <p class="note">This request expires at {{.Expires}}.</p>
 <p id="status" class="status" role="status" aria-live="polite"></p>
-{{if .NeedsFrom}}<div class="actions"><button id="confirm-from" type="button" class="primary"{{if .Confirmed}} hidden{{end}}>{{.Banner.ConfirmLabel}}</button></div>{{end}}
+{{if .NeedsFrom}}<div id="from-step"{{if .Confirmed}} hidden{{end}}><div class="actions confirm"><button id="confirm-from" type="button" class="primary">{{.Banner.ConfirmLabel}}</button></div>
+<p class="note">Next you approve with your passkey.</p></div>{{end}}
 <div class="actions" id="decide"{{if .NeedsFrom}}{{if not .Confirmed}} hidden{{end}}{{end}}>
   <button id="approve" type="button" class="primary">Approve with passkey</button>
   <button id="deny" type="button" class="danger">Deny</button>
