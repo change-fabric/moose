@@ -17,6 +17,13 @@
 // The ledger row moves claimed, dispatching, then one of sent, failed, unknown
 // or would_send, each step a conditional write on the previous state, so a
 // retry, a concurrent call or a crash can never send twice.
+//
+// Providers with Capabilities.NativeDraftSend (Microsoft Graph) send a staging
+// draft the provider re-serialises, so the guarantee is a semantic match plus
+// verify rather than byte-exact. The row first records the staging id, then the
+// send intent, then moves to submitted; the Sent copy is found by that id and
+// compared to the approval, ending in sent or sent_mismatch. See
+// dispatch_native.go.
 package sendflow
 
 import (
@@ -87,6 +94,11 @@ type Service struct {
 	// BatchBudget is how long one status call spends dispatching a batch's
 	// items before it returns and leaves the rest for the next call.
 	BatchBudget time.Duration
+	// ReconcileGap is the wait between looks for the Sent copy of a native
+	// draft-send (default 2 minutes), and ReconcileWindow how long an unresolved
+	// send is looked for before it is surfaced to the owner (default 24 hours).
+	ReconcileGap    time.Duration
+	ReconcileWindow time.Duration
 }
 
 func (s *Service) now() time.Time {
@@ -205,6 +217,14 @@ func FromMatches(a store.Account, from string) bool {
 	return strings.TrimSpace(from) != "" && strings.EqualFold(strings.TrimSpace(from), a.Address)
 }
 
+// providerOf is the account's provider, Google for a legacy record without one.
+func providerOf(a store.Account) string {
+	if a.Provider == "" {
+		return store.ProviderGoogle
+	}
+	return a.Provider
+}
+
 func (s *Service) blocked(ctx context.Context, a store.Account) *Error {
 	switch {
 	case a.Status != store.StatusOK:
@@ -220,6 +240,18 @@ func (s *Service) blocked(ctx context.Context, a store.Account) *Error {
 		msg := "the send kill switch is on, so nothing is sent"
 		if ks.Reason != "" {
 			msg += " (" + ks.Reason + ")"
+		}
+		return errf(CodeKillSwitch, "%s", msg)
+	}
+	prov := providerOf(a)
+	pks, err := s.Store.ProviderKillSwitch(ctx, prov)
+	if err != nil {
+		return errf(CodeInternal, "could not read the send kill switch")
+	}
+	if pks.On {
+		msg := "the " + prov + " send kill switch is on, so nothing is sent from " + prov + " accounts"
+		if pks.Reason != "" {
+			msg += " (" + pks.Reason + ")"
 		}
 		return errf(CodeKillSwitch, "%s", msg)
 	}
@@ -277,6 +309,8 @@ func (s *Service) requestOne(ctx context.Context, a store.Account, p provider.Pr
 		return Item{}, errf(CodeDraftNotFound, "draft %s does not exist in %s", draftID, a.Address)
 	case errors.Is(err, provider.ErrAuth):
 		return Item{}, errf("needs_reauth", "%s needs to be reconnected on the moose accounts page", a.Address)
+	case mailmsg.IsProblem(err):
+		return Item{}, errf(CodeNotSendable, "%s", err.Error())
 	case err != nil:
 		return Item{}, errf(CodeProvider, "the draft could not be read from the mailbox")
 	}
@@ -315,7 +349,7 @@ func (s *Service) requestOne(ctx context.Context, a store.Account, p provider.Pr
 		return Item{}, errf(CodeInternal, "could not encode the request")
 	}
 	wantSHA := api.SHA256(canon)
-	preview, err := s.preview(ctx, a, parsed, "Send this message")
+	preview, err := s.preview(ctx, a, parsed, "Send this message", p.Capabilities().NativeDraftSend)
 	if err != nil {
 		return Item{}, err
 	}
@@ -503,11 +537,12 @@ func (s *Service) trustOf(ctx context.Context, a store.Account, p provider.Provi
 
 // preview builds the approver preview. Every message field is parsed from the
 // stored bytes; the banner fields come from the account.
-func (s *Service) preview(ctx context.Context, a store.Account, m mailmsg.Parsed, action string) (api.Preview, error) {
+func (s *Service) preview(ctx context.Context, a store.Account, m mailmsg.Parsed, action string, semantic bool) (api.Preview, error) {
 	pv, err := s.accountPreview(ctx, a, action)
 	if err != nil {
 		return pv, err
 	}
+	pv.SemanticMatch = semantic
 	pv.Message = &api.Message{
 		From: strings.ToLower(m.From.Address), Subject: m.Subject, Body: m.Body,
 		To: addrList(m.To), Cc: addrList(m.Cc), Bcc: addrList(m.Bcc),

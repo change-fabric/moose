@@ -179,7 +179,7 @@ func TestMicrosoftStartUsesTheCommonAuthorityAndTheMailScopes(t *testing.T) {
 	}
 }
 
-func TestMicrosoftConnectStoresAReadOnlyAccount(t *testing.T) {
+func TestMicrosoftConnectStoresASendDisabledAccount(t *testing.T) {
 	m := newMSRig(t)
 	res, _ := m.connectMS(nil)
 	m.wantStatus(res, http.StatusSeeOther)
@@ -189,7 +189,7 @@ func TestMicrosoftConnectStoresAReadOnlyAccount(t *testing.T) {
 	}
 	a := accts[0]
 	if a.Provider != store.ProviderMicrosoft || a.ProviderUID != m.tid+"."+m.oid || a.Address != "Pat@Contoso.example" || a.DisplayName != "Pat Taylor" ||
-		a.Status != store.StatusOK || a.SendEnabled || !a.Caps.ReadOnly || a.Caps.SearchDialect != provider.DialectGraph || !a.IsDefault {
+		a.Status != store.StatusOK || a.SendEnabled || a.Caps.ReadOnly || !a.Caps.NativeDraftSend || a.Caps.SearchDialect != provider.DialectGraph || !a.IsDefault {
 		t.Fatalf("account = %+v", a)
 	}
 	if strings.Join(a.Scopes, " ") != "https://graph.microsoft.com/Mail.ReadWrite https://graph.microsoft.com/Mail.Send https://graph.microsoft.com/User.Read" {
@@ -207,16 +207,15 @@ func TestMicrosoftConnectStoresAReadOnlyAccount(t *testing.T) {
 		t.Errorf("token exchange form = %v", ex)
 	}
 
-	// The page badges the provider, reconnects through the provider's own route
-	// and shows why sending cannot be turned on.
+	// The page badges the provider and reconnects through the provider's own route.
 	_, body := m.get(connect.PagePath)
-	for _, want := range []string{`<span class="badge">Microsoft</span>`, "Connect Microsoft account", "/connect/microsoft/start", "Read-only: sending is not available for Microsoft accounts yet", "stored Microsoft tokens"} {
+	for _, want := range []string{`<span class="badge">Microsoft</span>`, "Connect Microsoft account", "/connect/microsoft/start", "stored Microsoft tokens"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("page lacks %q", want)
 		}
 	}
-	if strings.Contains(body, "/enable-send") {
-		t.Error("a read-only account offers Enable sending")
+	if strings.Contains(body, "Read-only: sending is not available") {
+		t.Error("a Microsoft account can send now; the read-only note must be gone")
 	}
 }
 

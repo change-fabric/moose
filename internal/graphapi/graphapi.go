@@ -177,6 +177,24 @@ func MapResponse(resp *http.Response) error {
 	raw, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrorBody))
 	var ge graphError
 	_ = json.Unmarshal(raw, &ge)
+	return &Error{Status: resp.StatusCode, Code: ge.Error.Code, Err: mapResponse(resp, raw)}
+}
+
+// Error is a mapped Graph answer. It keeps the HTTP status and Graph error code
+// next to the sentinel-wrapping error, so a caller that must tell one refusal
+// from another (a send that was provably rejected) can, without parsing text.
+type Error struct {
+	Status int
+	Code   string
+	Err    error
+}
+
+func (e *Error) Error() string { return e.Err.Error() }
+func (e *Error) Unwrap() error { return e.Err }
+
+func mapResponse(resp *http.Response, raw []byte) error {
+	var ge graphError
+	_ = json.Unmarshal(raw, &ge)
 	code, msg := ge.Error.Code, ge.Error.Message
 	detail := fmt.Sprintf("graph %d %s: %s", resp.StatusCode, code, truncate(msg, 300))
 

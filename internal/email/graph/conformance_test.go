@@ -33,6 +33,13 @@ type stub struct {
 	base string // server URL plus /v1.0, for nextLink
 	// requests records "METHOD path?query" for assertions.
 	requests []string
+	// delivered is what the recipient side holds for each accepted send.
+	delivered [][]byte
+	// sendAccepts counts POST .../send calls the stub accepted.
+	sendAccepts int
+	// mutateSent, when set, rewrites a message as it is delivered, so a test can
+	// make the Sent copy differ from what was approved.
+	mutateSent func(*stubMsg)
 }
 
 type stubMsg struct {
@@ -43,6 +50,14 @@ type stubMsg struct {
 	unread                          bool
 	att                             *providertest.SeedAttachment
 	attID                           string
+	// Draft and send state (draftstub_test.go).
+	cc, bcc  []provider.Address
+	isDraft  bool
+	modified time.Time
+	sent     time.Time
+	msgID    string
+	hasAtt   bool
+	htmlBody bool
 }
 
 // folderIDs are the ids in testdata/synthetic/mailfolders.json.
@@ -90,7 +105,11 @@ func (s *stub) Fail(t *testing.T, f providertest.Failure) {
 	s.mu.Unlock()
 }
 
-func (s *stub) Delivered(t *testing.T) [][]byte { return nil }
+func (s *stub) Delivered(t *testing.T) [][]byte {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([][]byte(nil), s.delivered...)
+}
 
 func (s *stub) Requests() []string {
 	s.mu.Lock()
@@ -131,6 +150,9 @@ func (s *stub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	path := strings.TrimPrefix(r.URL.Path, "/v1.0/me/")
 	segs := strings.Split(path, "/")
+	if s.draftRoutes(w, r, path) {
+		return
+	}
 	switch {
 	case path == "mailFolders":
 		_, _ = w.Write(fixture("mailfolders.json"))
@@ -184,6 +206,13 @@ func rcpts(l []provider.Address) []map[string]any {
 	return out
 }
 
+func (m *stubMsg) modifiedAt() time.Time {
+	if m.modified.IsZero() {
+		return m.date
+	}
+	return m.modified
+}
+
 func (s *stub) renderAtt(m *stubMsg) map[string]any {
 	return map[string]any{"@odata.type": "#microsoft.graph.fileAttachment", "id": m.attID, "name": m.att.Filename,
 		"contentType": m.att.MIMEType, "size": len(m.att.Data), "isInline": false}
@@ -195,10 +224,24 @@ func (s *stub) render(m *stubMsg, full bool) map[string]any {
 		"from":         map[string]any{"emailAddress": map[string]string{"name": m.from.Name, "address": m.from.Email}},
 		"toRecipients": rcpts(m.to), "ccRecipients": []any{},
 		"subject": m.subject, "receivedDateTime": m.date.UTC().Format(time.RFC3339), "sentDateTime": m.date.UTC().Format(time.RFC3339),
-		"bodyPreview": m.body, "internetMessageId": "<" + m.id + "@example.com>", "isRead": !m.unread, "hasAttachments": m.att != nil,
+		"bodyPreview": m.body, "internetMessageId": "<" + m.id + "@example.com>", "isRead": !m.unread, "hasAttachments": m.att != nil || m.hasAtt,
+		"isDraft": m.isDraft, "bccRecipients": rcpts(m.bcc), "lastModifiedDateTime": m.modifiedAt().UTC().Format(time.RFC3339),
+	}
+	if m.msgID != "" {
+		out["internetMessageId"] = m.msgID
+	}
+	if !m.sent.IsZero() {
+		out["sentDateTime"] = m.sent.UTC().Format(time.RFC3339)
+	}
+	if m.cc != nil {
+		out["ccRecipients"] = rcpts(m.cc)
 	}
 	if full {
-		out["body"] = map[string]string{"contentType": "text", "content": m.body}
+		ct := "text"
+		if m.htmlBody {
+			ct = "html"
+		}
+		out["body"] = map[string]string{"contentType": ct, "content": m.body}
 		if m.att != nil {
 			out["attachments"] = []any{s.renderAtt(m)}
 		}
@@ -292,5 +335,13 @@ func graphFactory(t *testing.T) (provider.Provider, providertest.Seeder) {
 }
 
 func TestConformanceAgainstAGraphStub(t *testing.T) {
-	providertest.RunRead(t, graphFactory)
+	t.Run("Read", func(t *testing.T) { providertest.RunRead(t, graphFactory) })
+	t.Run("Draft", func(t *testing.T) { providertest.RunDraft(t, graphFactory) })
+	t.Run("Send", func(t *testing.T) {
+		providertest.RunSend(t, func(t *testing.T) (provider.Provider, providertest.Seeder) {
+			c, s := newGraph(t)
+			c.PollInterval = time.Millisecond
+			return c, s
+		})
+	})
 }

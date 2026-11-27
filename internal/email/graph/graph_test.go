@@ -18,36 +18,9 @@ import (
 
 func TestCapabilities(t *testing.T) {
 	c, _ := newGraph(t)
-	want := provider.Capabilities{Threads: true, Labels: false, SearchDialect: provider.DialectGraph, NativeDraftSend: true, ReadOnly: true}
+	want := provider.Capabilities{Threads: true, Labels: false, SearchDialect: provider.DialectGraph, NativeDraftSend: true}
 	if got := c.Capabilities(); got != want {
 		t.Errorf("capabilities = %+v, want %+v", got, want)
-	}
-}
-
-// Draft and send land in a later phase. Until then each answers the stable
-// unsupported_for_provider error and touches nothing on the wire.
-func TestDraftAndSendAreUnsupportedForProvider(t *testing.T) {
-	c, s := newGraph(t)
-	ctx := context.Background()
-	calls := map[string]error{
-		"CreateDraft": func() error { _, err := c.CreateDraft(ctx, provider.DraftInput{Raw: []byte("x")}); return err }(),
-		"UpdateDraft": func() error { _, err := c.UpdateDraft(ctx, "d", provider.DraftInput{}); return err }(),
-		"GetDraftRaw": func() error { _, err := c.GetDraftRaw(ctx, "d"); return err }(),
-		"SendDraft":   func() error { _, err := c.SendDraft(ctx, []byte("x"), ""); return err }(),
-		"DeleteDraft": func() error { return c.DeleteDraft(ctx, "d") }(),
-	}
-	for name, err := range calls {
-		if !errors.Is(err, provider.ErrUnsupported) {
-			t.Errorf("%s err = %v, want ErrUnsupported", name, err)
-		} else if !strings.Contains(err.Error(), "unsupported_for_provider") {
-			t.Errorf("%s err %q lacks the stable code", name, err)
-		}
-	}
-	if provider.CodeUnsupportedForProvider != "unsupported_for_provider" {
-		t.Errorf("code = %q", provider.CodeUnsupportedForProvider)
-	}
-	if n := len(s.Requests()); n != 0 {
-		t.Errorf("unsupported calls made %d requests", n)
 	}
 }
 

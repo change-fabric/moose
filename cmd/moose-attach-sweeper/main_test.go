@@ -12,6 +12,7 @@ import (
 
 	"github.com/change-fabric/moose/internal/email/attach"
 	"github.com/change-fabric/moose/internal/email/attach/attachtest"
+	"github.com/change-fabric/moose/internal/email/sendflow"
 )
 
 var now = time.Date(2026, 11, 25, 12, 0, 0, 0, time.UTC)
@@ -79,5 +80,30 @@ func TestRunPublishesNoMetricWhenListingFails(t *testing.T) {
 	})
 	if err == nil || strings.Contains(out, "OldestAttachmentAgeSeconds") {
 		t.Fatalf("err=%v out=%q: a failed listing must not publish an age", err, out)
+	}
+}
+
+type fakeSendSweeper struct {
+	rep   sendflow.SweepReport
+	err   error
+	calls int
+}
+
+func (f *fakeSendSweeper) SweepSends(context.Context) (sendflow.SweepReport, error) {
+	f.calls++
+	return f.rep, f.err
+}
+
+func TestRunSendsRunsTheStepAndSurfacesItsFailure(t *testing.T) {
+	if err := runSends(context.Background(), quiet(), nil); err != nil {
+		t.Fatalf("a deployment without a send sweeper is not an error: %v", err)
+	}
+	ok := &fakeSendSweeper{rep: sendflow.SweepReport{Examined: 2, Cleaned: 1}}
+	if err := runSends(context.Background(), quiet(), ok); err != nil || ok.calls != 1 {
+		t.Fatalf("err %v calls %d", err, ok.calls)
+	}
+	bad := &fakeSendSweeper{err: errors.New("graph down")}
+	if err := runSends(context.Background(), quiet(), bad); err == nil || !strings.Contains(err.Error(), "graph down") {
+		t.Fatalf("err = %v, want the failure surfaced so Lambda retries", err)
 	}
 }

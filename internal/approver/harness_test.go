@@ -223,6 +223,8 @@ type sendOpts struct {
 	Disabled bool
 	Last     *api.LastSent
 	Body     string
+	// Semantic marks a provider that re-serialises on send (Microsoft).
+	Semantic bool
 }
 
 // sendBody builds an email-send create body for account a.
@@ -251,7 +253,7 @@ func sendBody(a acct, o sendOpts) api.CreateBody {
 	preview, _ := json.Marshal(api.Preview{
 		AccountID: a.ID, Nickname: a.Nick, FromAddress: a.Addr, DisplayName: a.Display, ColorIndex: a.Color,
 		AccountStatus: o.Status, SendEnabled: &on, Siblings: o.Siblings, LastSent: o.Last,
-		Message: &api.Message{From: a.Addr, To: o.To, Subject: "Friday", Body: o.Body},
+		Message: &api.Message{From: a.Addr, To: o.To, Subject: "Friday", Body: o.Body}, SemanticMatch: o.Semantic,
 	})
 	return api.CreateBody{IdempotencyKey: o.Key, Kind: api.KindEmailSend, Payload: payload, Preview: preview}
 }

@@ -1149,6 +1149,100 @@ func Run(t *testing.T, newStore func(t *testing.T) store.Store) {
 		}
 	})
 
+	t.Run("PatchSendWritesStagingAndCorrelationFieldsConditionally", func(t *testing.T) {
+		s := newStore(t)
+		must(t, s.ClaimSend(ctx, claim("p1", "acc_1", now), 5))
+		row, err := s.PatchSend(ctx, "p1", store.SendClaimed, store.SendClaimed, store.SendPatch{StagingID: "stage-1", StagingMessageID: "<m1@example.com>"}, now)
+		must(t, err)
+		if row.State != store.SendClaimed || row.StagingID != "stage-1" || row.StagingMessageID != "<m1@example.com>" || !row.SendIssuedAt.IsZero() {
+			t.Fatalf("row = %+v", row)
+		}
+		issued := now.Add(time.Second)
+		row, err = s.PatchSend(ctx, "p1", store.SendClaimed, store.SendDispatching, store.SendPatch{SendIssuedAt: issued}, issued)
+		must(t, err)
+		if row.State != store.SendDispatching || !row.SendIssuedAt.Equal(issued) || row.StagingID != "stage-1" {
+			t.Fatalf("a patch must keep the fields it does not set: %+v", row)
+		}
+		if _, err := s.PatchSend(ctx, "p1", store.SendClaimed, store.SendSubmitted, store.SendPatch{}, now); !errors.Is(err, store.ErrConflict) {
+			t.Fatalf("patch from the wrong state err = %v, want ErrConflict", err)
+		}
+		if _, err := s.PatchSend(ctx, "nope", store.SendClaimed, store.SendClaimed, store.SendPatch{}, now); !errors.Is(err, store.ErrNotFound) {
+			t.Fatalf("missing row err = %v", err)
+		}
+		row, err = s.PatchSend(ctx, "p1", store.SendDispatching, store.SendSubmitted, store.SendPatch{}, now)
+		must(t, err)
+		row, err = s.PatchSend(ctx, "p1", store.SendSubmitted, store.SendSent, store.SendPatch{SentID: "sent-1", ProviderMessageID: "sent-1", ReconcileAttempts: 2, LastReconcile: now}, now)
+		must(t, err)
+		got, err := s.GetSend(ctx, "p1")
+		must(t, err)
+		if got.State != store.SendSent || got.SentID != "sent-1" || got.ProviderMessageID != "sent-1" || got.StagingID != "stage-1" || got.ReconcileAttempts != 2 || !got.SendIssuedAt.Equal(issued) {
+			t.Fatalf("row = %+v", got)
+		}
+		// The new states are reachable from AdvanceSend too, and legacy rows
+		// (no staging fields) keep working.
+		must(t, s.ClaimSend(ctx, claim("p2", "acc_1", now), 5))
+		_, err = s.AdvanceSend(ctx, "p2", store.SendClaimed, store.SendDispatching, "", now)
+		must(t, err)
+		_, err = s.AdvanceSend(ctx, "p2", store.SendDispatching, store.SendSubmitted, "", now)
+		must(t, err)
+		legacy, err := s.AdvanceSend(ctx, "p2", store.SendSubmitted, store.SendSentMismatch, "", now)
+		must(t, err)
+		if legacy.State != store.SendSentMismatch || legacy.StagingID != "" {
+			t.Fatalf("row = %+v", legacy)
+		}
+	})
+
+	t.Run("SendSweepIndexHoldsStagedRowsUntilSweepDone", func(t *testing.T) {
+		s := newStore(t)
+		for _, id := range []string{"w1", "w2", "w3"} {
+			must(t, s.ClaimSend(ctx, claim(id, "acc_1", now), 9))
+		}
+		if rows, err := s.ListSendSweep(ctx); err != nil || len(rows) != 0 {
+			t.Fatalf("rows with no staging draft must not be listed: %v %v", rows, err)
+		}
+		_, err := s.PatchSend(ctx, "w1", store.SendClaimed, store.SendClaimed, store.SendPatch{StagingID: "s1"}, now)
+		must(t, err)
+		_, err = s.PatchSend(ctx, "w2", store.SendClaimed, store.SendClaimed, store.SendPatch{StagingID: "s2"}, now)
+		must(t, err)
+		// A later transition through AdvanceSend or FailSend keeps the row indexed.
+		must(t, s.FailSend(ctx, "w2", store.SendClaimed, now))
+		rows, err := s.ListSendSweep(ctx)
+		must(t, err)
+		if len(rows) != 2 || rows[0].RequestID != "w1" || rows[1].RequestID != "w2" || rows[1].State != store.SendFailed {
+			t.Fatalf("rows = %+v", rows)
+		}
+		_, err = s.PatchSend(ctx, "w2", store.SendFailed, store.SendFailed, store.SendPatch{SweepDone: true}, now)
+		must(t, err)
+		rows, err = s.ListSendSweep(ctx)
+		must(t, err)
+		if len(rows) != 1 || rows[0].RequestID != "w1" {
+			t.Fatalf("a row with sweep_done must leave the index: %+v", rows)
+		}
+	})
+
+	t.Run("ProviderKillSwitchIsScopedToOneProvider", func(t *testing.T) {
+		s := newStore(t)
+		if ks, err := s.ProviderKillSwitch(ctx, store.ProviderMicrosoft); err != nil || ks.On {
+			t.Fatalf("an unset provider switch must be off: %+v %v", ks, err)
+		}
+		must(t, s.SetProviderKillSwitch(ctx, store.ProviderMicrosoft, true, "sent_mismatch", now))
+		ks, err := s.ProviderKillSwitch(ctx, store.ProviderMicrosoft)
+		must(t, err)
+		if !ks.On || ks.Reason != "sent_mismatch" || !ks.At.Equal(now) {
+			t.Fatalf("switch = %+v", ks)
+		}
+		if g, _ := s.ProviderKillSwitch(ctx, store.ProviderGoogle); g.On {
+			t.Fatal("the Microsoft switch must not turn Google off")
+		}
+		if g, _ := s.KillSwitch(ctx); g.On {
+			t.Fatal("a provider switch must not set the global switch")
+		}
+		must(t, s.SetProviderKillSwitch(ctx, store.ProviderMicrosoft, false, "", now.Add(time.Minute)))
+		if ks, _ = s.ProviderKillSwitch(ctx, store.ProviderMicrosoft); ks.On {
+			t.Fatal("the provider switch did not turn off")
+		}
+	})
+
 	t.Run("FailSendReleasesCapSlot", func(t *testing.T) {
 		s := newStore(t)
 		must(t, s.ClaimSend(ctx, claim("r1", "acc_1", now), 1))

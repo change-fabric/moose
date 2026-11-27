@@ -429,8 +429,8 @@ func TestMicrosoftAccountsGetTheGraphClient(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if caps := p.Capabilities(); caps.SearchDialect != provider.DialectGraph || !caps.ReadOnly {
-		t.Fatalf("capabilities = %+v, want read-only Graph", caps)
+	if caps := p.Capabilities(); caps.SearchDialect != provider.DialectGraph || caps.ReadOnly || !caps.NativeDraftSend {
+		t.Fatalf("capabilities = %+v, want Graph with native draft send and no read-only marker", caps)
 	}
 	boxes, err := p.ListMailboxes(context.Background())
 	if err != nil || len(boxes) == 0 {
@@ -439,8 +439,8 @@ func TestMicrosoftAccountsGetTheGraphClient(t *testing.T) {
 	if !strings.HasPrefix(auth, "Bearer at-") {
 		t.Errorf("Graph saw Authorization %q, want the refreshed token", auth)
 	}
-	if _, err := p.CreateDraft(context.Background(), provider.DraftInput{Raw: []byte("x")}); !errors.Is(err, provider.ErrUnsupported) {
-		t.Errorf("CreateDraft = %v, want ErrUnsupported", err)
+	if _, ok := p.(provider.NativeSender); !ok {
+		t.Error("the Graph provider must implement provider.NativeSender")
 	}
 }
 

@@ -802,6 +802,89 @@ func (s *impl) FailSend(ctx context.Context, requestID, from string, now time.Ti
 	return fmt.Errorf("%w: too much contention on send %s", ErrConflict, requestID)
 }
 
+const sendSweepIndex = "SENDSWEEP"
+
+func (s *impl) PatchSend(ctx context.Context, requestID, from, to string, patch SendPatch, now time.Time) (SendRow, error) {
+	for range 10 {
+		it, ok, err := s.b.Get(ctx, sendPK(requestID), "META")
+		if err != nil {
+			return SendRow{}, err
+		}
+		if !ok {
+			return SendRow{}, ErrNotFound
+		}
+		r, err := decode[SendRow](it)
+		if err != nil {
+			return SendRow{}, err
+		}
+		if r.State != from {
+			return r, fmt.Errorf("%w: ledger row is %s, not %s", ErrConflict, r.State, from)
+		}
+		r.State, r.Updated = to, now.UTC()
+		if patch.StagingID != "" {
+			r.StagingID = patch.StagingID
+		}
+		if patch.StagingMessageID != "" {
+			r.StagingMessageID = patch.StagingMessageID
+		}
+		if patch.SentID != "" {
+			r.SentID = patch.SentID
+		}
+		if patch.ProviderMessageID != "" {
+			r.ProviderMessageID = patch.ProviderMessageID
+		}
+		if !patch.SendIssuedAt.IsZero() {
+			r.SendIssuedAt = patch.SendIssuedAt.UTC()
+		}
+		if patch.ReconcileAttempts > 0 {
+			r.ReconcileAttempts, r.LastReconcile = patch.ReconcileAttempts, patch.LastReconcile.UTC()
+		}
+		if patch.SweepDone {
+			r.SweepDone = true
+		}
+		next := it
+		next.Data, next.Ver = encode(r), it.Ver+1
+		next.G1 = ""
+		if r.StagingID != "" && !r.SweepDone {
+			next.G1 = sendSweepIndex
+		}
+		err = s.b.Transact(ctx, []Op{{Kind: OpPut, Item: next, Cond: Cond{Kind: CondVer, Ver: it.Ver}}})
+		if _, lost := condIndex(err); lost {
+			continue
+		}
+		if err != nil {
+			return SendRow{}, err
+		}
+		return decode[SendRow](next)
+	}
+	return SendRow{}, fmt.Errorf("%w: too much contention on send %s", ErrConflict, requestID)
+}
+
+func (s *impl) ListSendSweep(ctx context.Context) ([]SendRow, error) {
+	items, err := s.b.QueryIndex(ctx, sendSweepIndex)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]SendRow, 0, len(items))
+	for _, it := range items {
+		r, err := decode[SendRow](it)
+		if err != nil {
+			return nil, err
+		}
+		if r.SweepDone || r.StagingID == "" {
+			continue // the index may lag a patch
+		}
+		out = append(out, r)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if !out[i].Created.Equal(out[j].Created) {
+			return out[i].Created.Before(out[j].Created)
+		}
+		return out[i].RequestID < out[j].RequestID
+	})
+	return out, nil
+}
+
 func (s *impl) ReserveCap(ctx context.Context, accountID string, t time.Time, limit int) error {
 	if limit <= 0 {
 		return ErrRateLimited
@@ -1063,6 +1146,24 @@ const (
 func (s *impl) SetKillSwitch(ctx context.Context, on bool, reason string, now time.Time) error {
 	st := KillState{On: on, Reason: reason, At: now.UTC()}
 	return s.b.Transact(ctx, []Op{{Kind: OpPut, Item: Item{PK: settingsPK, SK: killSK, Data: encode(st)}}})
+}
+
+func providerKillSK(provider string) string { return killSK + "#" + provider }
+
+func (s *impl) SetProviderKillSwitch(ctx context.Context, provider string, on bool, reason string, now time.Time) error {
+	if provider == "" {
+		return errors.New("emailstore: provider kill switch needs a provider")
+	}
+	st := KillState{On: on, Reason: reason, At: now.UTC()}
+	return s.b.Transact(ctx, []Op{{Kind: OpPut, Item: Item{PK: settingsPK, SK: providerKillSK(provider), Data: encode(st)}}})
+}
+
+func (s *impl) ProviderKillSwitch(ctx context.Context, provider string) (KillState, error) {
+	st, _, err := load[KillState](ctx, s.b, settingsPK, providerKillSK(provider))
+	if errors.Is(err, ErrNotFound) {
+		return KillState{}, nil
+	}
+	return st, err
 }
 
 func (s *impl) KillSwitch(ctx context.Context) (KillState, error) {

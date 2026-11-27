@@ -170,3 +170,22 @@ func TestPageRespectsAccessibilityRules(t *testing.T) {
 		}
 	}
 }
+
+func TestSemanticPreviewSaysSentContentWillMatchTheseFields(t *testing.T) {
+	h := newHarness(t)
+	ms := h.create(sendBody(work, sendOpts{Semantic: true})).RequestID
+	body := h.get("/approve/r/" + ms).Body
+	for _, want := range []string{"Sent content will match these fields", "Approved snapshot sha256", "Hello Bob"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("Microsoft preview lacks %q", want)
+		}
+	}
+	if strings.Contains(body, "RFC822 sha256") {
+		t.Error("a semantic preview must not claim exact RFC822 bytes")
+	}
+	g := h.create(sendBody(work, sendOpts{Draft: "draft-2"})).RequestID
+	gbody := h.get("/approve/r/" + g).Body
+	if strings.Contains(gbody, "Sent content will match these fields") || !strings.Contains(gbody, "RFC822 sha256") {
+		t.Error("a byte-exact preview must keep its wording")
+	}
+}

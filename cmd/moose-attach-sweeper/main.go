@@ -23,6 +23,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 
 	"github.com/change-fabric/moose/internal/email/attach"
+	"github.com/change-fabric/moose/internal/email/sendflow"
 )
 
 // version is set at build time with -ldflags "-X main.version=...".
@@ -48,7 +49,7 @@ func main() {
 		if err != nil {
 			return err
 		}
-		return run(ctx, log, st, time.Now)
+		return errors.Join(run(ctx, log, st, time.Now), runSends(ctx, log, openSendSweeper()))
 	}
 	if os.Getenv("AWS_LAMBDA_RUNTIME_API") != "" {
 		lambda.Start(handler)
@@ -81,6 +82,34 @@ func run(ctx context.Context, log *slog.Logger, st attach.Store, now func() time
 		"oldest_remaining_seconds", int64(rep.OldestRemaining/time.Second))
 	if err != nil {
 		return errors.Join(errors.New("sweep incomplete"), err)
+	}
+	return nil
+}
+
+// sendSweeper is the native draft-send step: reconcile submitted and unknown
+// Microsoft sends and delete the staging drafts of failed and sent ledgers
+// (sendflow.Service implements it).
+type sendSweeper interface {
+	SweepSends(ctx context.Context) (sendflow.SweepReport, error)
+}
+
+// openSendSweeper returns the send sweeper, or nil when this deployment has not
+// been given one. Building it needs the email table, the KMS key and the
+// Microsoft client secret, which this Lambda does not have until the Terraform
+// of Phase 8 grants them; until then `moose-email sweep-sends` runs the same
+// step. email.microsoft.enabled is false, so no staging draft exists to sweep.
+func openSendSweeper() sendSweeper { return nil }
+
+// runSends runs the send step once. A nil sweeper is not an error.
+func runSends(ctx context.Context, log *slog.Logger, sw sendSweeper) error {
+	if sw == nil {
+		return nil
+	}
+	rep, err := sw.SweepSends(ctx)
+	log.Info(name+" swept sends", "examined", rep.Examined, "reconciled", rep.Reconciled, "cleaned", rep.Cleaned,
+		"escalated", rep.Escalated, "skipped", rep.Skipped, "errors", rep.Errors)
+	if err != nil {
+		return errors.Join(errors.New("send sweep incomplete"), err)
 	}
 	return nil
 }
