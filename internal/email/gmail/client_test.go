@@ -306,6 +306,27 @@ func TestGetDraftRawChecksTheDecodedSizeToo(t *testing.T) {
 	}
 }
 
+// Gmail prepends a Received trace header to stored drafts; it is dropped so
+// the draft passes the sendable-header allowlist. Other headers stay.
+func TestGetDraftRawDropsGmailsLeadingReceivedHeader(t *testing.T) {
+	stored := "Received: from 1 named unknown\r\n by gmailapi.google.com\r\n with HTTPREST; Fri, 27 Nov 2026 03:00:00 -0800\r\n" +
+		"Received: from 2\r\nFrom: a@b.c\r\nTo: d@e.f\r\nX-Other: kept\r\n\r\nbody"
+	c := newClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("format") == "minimal" {
+			writeJSON(w, map[string]any{"id": "d1", "message": map[string]any{"sizeEstimate": 10}})
+			return
+		}
+		writeJSON(w, map[string]any{"id": "d1", "message": map[string]any{"raw": b64(stored)}})
+	}))
+	raw, err := c.GetDraftRaw(context.Background(), "d1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "From: a@b.c\r\nTo: d@e.f\r\nX-Other: kept\r\n\r\nbody"; string(raw) != want {
+		t.Fatalf("raw = %q, want %q", raw, want)
+	}
+}
+
 // Definite client errors on send are ErrRejected, so the send engine can tell
 // "not accepted" from a timeout or a server error, which is unknown.
 func TestSendClassifiesDefiniteAndAmbiguousFailures(t *testing.T) {

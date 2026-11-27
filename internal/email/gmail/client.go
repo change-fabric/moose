@@ -217,7 +217,31 @@ func (c *Client) GetDraftRaw(ctx context.Context, id string) ([]byte, error) {
 	if len(raw) > provider.MaxDraftRaw {
 		return nil, fmt.Errorf("%w: draft %s", provider.ErrDraftTooLarge, id)
 	}
-	return raw, nil
+	return stripLeadingReceived(raw), nil
+}
+
+// stripLeadingReceived drops the Received trace header Gmail prepends to a
+// stored draft ("Received: from ... by gmailapi.google.com with HTTPREST").
+// Only Received lines at the very top of the header block are removed, with
+// their folded continuations; any other unexpected header is left for the
+// send checks to refuse.
+func stripLeadingReceived(raw []byte) []byte {
+	rest := raw
+	for {
+		if len(rest) < 9 || !strings.EqualFold(string(rest[:9]), "Received:") {
+			return rest
+		}
+		for {
+			i := bytes.IndexByte(rest, '\n')
+			if i < 0 {
+				return raw
+			}
+			rest = rest[i+1:]
+			if len(rest) == 0 || (rest[0] != ' ' && rest[0] != '\t') {
+				break
+			}
+		}
+	}
 }
 
 func (c *Client) SendDraft(ctx context.Context, raw []byte, threadID string) (provider.SentMessage, error) {
