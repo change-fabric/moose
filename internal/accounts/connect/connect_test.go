@@ -259,7 +259,7 @@ func (r *rig) accounts() []store.Account {
 
 func (r *rig) seed(nick, addr string, color int, status string) store.Account {
 	r.t.Helper()
-	a := store.Account{Owner: owner, ID: store.NewAccountID(), Provider: "gmail", ProviderUID: addr, Address: addr, Nickname: nick,
+	a := store.Account{Owner: owner, ID: store.NewAccountID(), Provider: store.ProviderGoogle, ProviderUID: addr, Address: addr, Nickname: nick,
 		ColorIndex: color, Status: status, HourlyCap: store.DefaultHourlyCap, Created: time.Now().Add(time.Duration(color) * time.Second),
 		RefreshToken: []byte("sealed")}
 	if err := r.st.CreateAccount(context.Background(), a); err != nil {
@@ -376,7 +376,7 @@ func TestConnectStoresAReadOnlyAccount(t *testing.T) {
 		t.Fatalf("%d accounts stored, want 1", len(accts))
 	}
 	a := accts[0]
-	if !strings.HasPrefix(a.ID, "acc_") || a.Address != "Pat@Example.com" || a.ProviderUID != "pat@example.com" || a.Provider != "gmail" ||
+	if !strings.HasPrefix(a.ID, "acc_") || a.Address != "Pat@Example.com" || a.ProviderUID != "pat@example.com" || a.Provider != store.ProviderGoogle ||
 		a.Nickname != "pat" || a.DisplayName != "Name of Pat@Example.com" || a.ColorIndex != 0 || !a.IsDefault ||
 		a.Status != store.StatusOK || a.SendEnabled || a.HourlyCap != store.DefaultHourlyCap || !a.Caps.Threads || a.Caps.SearchDialect != provider.DialectGmail {
 		t.Fatalf("account = %+v", a)
@@ -446,8 +446,11 @@ func TestReconnectKeepsIdentity(t *testing.T) {
 	r.connectAccount("pat@x.example", nil)
 	r.connectAccount("kim@x.example", nil)
 	orig := r.accounts()[0]
-	orig.Status, orig.RefreshToken = store.StatusNeedsReauth, []byte("stale")
-	if err := r.st.UpdateAccount(context.Background(), orig); err != nil {
+	if err := r.st.SetAccountCredential(context.Background(), orig.Owner, orig.ID, []byte("stale"), orig.Version); err != nil {
+		t.Fatal(err)
+	}
+	orig.RefreshToken = []byte("stale")
+	if err := r.st.UpdateAccount(context.Background(), orig.Owner, orig.ID, store.AccountPatch{Status: store.Ptr(store.StatusNeedsReauth)}); err != nil {
 		t.Fatal(err)
 	}
 	// Through the Reconnect button.
@@ -475,8 +478,7 @@ func TestReconnectKeepsSendSettingOnlyWhileConnected(t *testing.T) {
 	r := newRig(t)
 	r.connectAccount("pat@x.example", nil)
 	a := r.accounts()[0]
-	a.SendEnabled = true
-	_ = r.st.UpdateAccount(context.Background(), a)
+	_ = r.st.UpdateAccount(context.Background(), a.Owner, a.ID, store.AccountPatch{SendEnabled: store.Ptr(true)})
 	r.connectAccount("pat@x.example", url.Values{"account_id": {a.ID}})
 	if got, _ := r.st.GetAccount(context.Background(), owner, a.ID); !got.SendEnabled {
 		t.Fatal("a plain reconnect turned send off")
@@ -589,8 +591,7 @@ func TestPageRowsAndControls(t *testing.T) {
 	r := newRig(t)
 	ok := r.seed("Alpha", "alpha@x.example", 0, store.StatusOK)
 	sendOn := r.seed("Bravo", "bravo@x.example", 1, store.StatusOK)
-	sendOn.SendEnabled = true
-	_ = r.st.UpdateAccount(context.Background(), sendOn)
+	_ = r.st.UpdateAccount(context.Background(), sendOn.Owner, sendOn.ID, store.AccountPatch{SendEnabled: store.Ptr(true)})
 	reauth := r.seed("Charlie", "charlie@x.example", 2, store.StatusNeedsReauth)
 	delta := r.seed("Delta", "delta@x.example", 3, store.StatusDisconnected)
 	_, body := r.get(connect.PagePath)
@@ -659,8 +660,7 @@ func TestPageHasSecurityHeadersAndPhoneViewport(t *testing.T) {
 func TestDisconnectNeedsTheTypedAddress(t *testing.T) {
 	r := newRig(t)
 	a := r.seed("Work", "w@x.example", 0, store.StatusOK)
-	a.SendEnabled = true
-	_ = r.st.UpdateAccount(context.Background(), a)
+	_ = r.st.UpdateAccount(context.Background(), a.Owner, a.ID, store.AccountPatch{SendEnabled: store.Ptr(true)})
 	path := "/connect/accounts/" + a.ID + "/disconnect"
 	for _, wrong := range []string{"", "Work", "w@x", "w@x.example.com"} {
 		res, _ := r.post(path, url.Values{"confirm": {wrong}})
@@ -683,7 +683,7 @@ func TestDisconnectNeedsTheTypedAddress(t *testing.T) {
 
 func TestAnotherOwnersAccountIsNotFound(t *testing.T) {
 	r := newRig(t)
-	other := store.Account{Owner: "conner", ID: store.NewAccountID(), Provider: "gmail", ProviderUID: "c@x.example", Address: "c@x.example",
+	other := store.Account{Owner: "conner", ID: store.NewAccountID(), Provider: store.ProviderGoogle, ProviderUID: "c@x.example", Address: "c@x.example",
 		Nickname: "Mine", Status: store.StatusOK, RefreshToken: []byte("sealed")}
 	if err := r.st.CreateAccount(context.Background(), other); err != nil {
 		t.Fatal(err)
@@ -800,8 +800,7 @@ func TestEnableSendWithoutApprover(t *testing.T) {
 func TestDisableSendAppliesDirectly(t *testing.T) {
 	r := newRig(t)
 	a := r.seed("Work", "w@x.example", 0, store.StatusOK)
-	a.SendEnabled = true
-	_ = r.st.UpdateAccount(context.Background(), a)
+	_ = r.st.UpdateAccount(context.Background(), a.Owner, a.ID, store.AccountPatch{SendEnabled: store.Ptr(true)})
 	res, _ := r.post("/connect/accounts/"+a.ID+"/disable-send", nil)
 	r.wantStatus(res, http.StatusSeeOther)
 	if got, _ := r.st.GetAccount(context.Background(), owner, a.ID); got.SendEnabled {

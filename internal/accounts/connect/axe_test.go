@@ -30,8 +30,7 @@ func TestDumpPagesForAxe(t *testing.T) {
 
 	r.seed("Alpha", "alpha@x.example", 0, store.StatusOK)
 	on := r.seed("Bravo", "bravo@x.example", 1, store.StatusOK)
-	on.SendEnabled = true
-	_ = r.st.UpdateAccount(context.Background(), on)
+	_ = r.st.UpdateAccount(context.Background(), on.Owner, on.ID, store.AccountPatch{SendEnabled: store.Ptr(true)})
 	r.seed("Charlie", "charlie@x.example", 2, store.StatusNeedsReauth)
 	r.seed("Delta", "delta@x.example", 13, store.StatusDisconnected)
 	res, body := r.get(connect.PagePath + "?connected=" + on.ID)

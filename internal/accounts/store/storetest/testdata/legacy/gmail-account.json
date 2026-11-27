@@ -1,0 +1,18 @@
+{
+  "owner": "pat",
+  "id": "acc_legacygmail0001",
+  "provider": "gmail",
+  "provider_uid": "legacy@example.com",
+  "address": "Legacy@Example.com",
+  "display_name": "Legacy User",
+  "nickname": "Legacy",
+  "color_index": 2,
+  "status": "ok",
+  "send_enabled": true,
+  "hourly_cap": 10,
+  "capabilities": {"threads": true, "labels": true, "search_dialect": "gmail", "native_draft_send": false},
+  "scopes": ["https://www.googleapis.com/auth/gmail.readonly", "https://www.googleapis.com/auth/gmail.compose"],
+  "refresh_token": "c2VhbGVkLWxlZ2FjeQ==",
+  "created": "2026-01-02T03:04:05Z",
+  "updated": "2026-01-02T03:04:05Z"
+}

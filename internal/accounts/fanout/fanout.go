@@ -190,9 +190,15 @@ func Classify(err error) (status, reason string, retry bool) {
 	return StatusError, "provider_error", false
 }
 
-// Retry429 runs fn, retrying with exponential backoff (200ms, 400ms) while it
-// reports provider.ErrRateLimited. Three attempts at most; the last error is
-// returned, so a persistent 429 fails that account only.
+// Retry429 runs fn, retrying while it reports provider.ErrRateLimited. Three
+// attempts at most; the last error is returned, so a persistent 429 fails that
+// account only.
+//
+// When the error is a *provider.RateLimitError with a RetryAfter hint, the wait
+// is exactly that hint, but only if it fits in the time left in ctx (the
+// per-account budget): a longer wait returns the rate-limit error at once,
+// which Classify reports as rate_limited with has_more. Without a hint the wait
+// is exponential backoff (200ms, 400ms), also bounded by the budget.
 func Retry429(ctx context.Context, sleep func(context.Context, time.Duration) error, fn func() error) error {
 	var err error
 	delay := 200 * time.Millisecond
@@ -203,12 +209,29 @@ func Retry429(ctx context.Context, sleep func(context.Context, time.Duration) er
 		if attempt == 2 {
 			break
 		}
-		if serr := sleep(ctx, delay); serr != nil {
+		wait := delay
+		var rl *provider.RateLimitError
+		if errors.As(err, &rl) && rl.RetryAfter > 0 {
+			wait = rl.RetryAfter
+			if !fitsBudget(ctx, wait) {
+				return err
+			}
+		}
+		if serr := sleep(ctx, wait); serr != nil {
 			return serr
 		}
 		delay *= 2
 	}
 	return err
+}
+
+// fitsBudget reports whether waiting d still leaves time in ctx. A context
+// without a deadline is bounded by the default per-account budget.
+func fitsBudget(ctx context.Context, d time.Duration) bool {
+	if dl, ok := ctx.Deadline(); ok {
+		return d < time.Until(dl)
+	}
+	return d < DefaultPerAccount
 }
 
 // Cursor: an opaque, HMAC-signed position per account, so a page boundary

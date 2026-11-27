@@ -657,7 +657,7 @@ func (t *trust) resolve(ctx context.Context, addr string) string {
 	}
 	if t.lookups < maxSenderLookups {
 		t.lookups++
-		res, err := t.p.Search(ctx, provider.Query{To: addr, Mailbox: "SENT", Limit: 1})
+		res, err := t.p.Search(ctx, provider.Query{To: addr, Mailbox: provider.MailboxSent, Limit: 1})
 		if err == nil && len(res.Messages) > 0 {
 			t.d.putContact(ctx, t.a.ID, addr, store.TrustKnown)
 			return store.TrustKnown
@@ -687,7 +687,7 @@ func (d Deps) putContact(ctx context.Context, accountID, addr, trust string) {
 func (d Deps) recordSent(ctx context.Context, a store.Account, m provider.Message) {
 	sent := false
 	for _, b := range m.Mailboxes {
-		if b == "SENT" {
+		if b == provider.MailboxSent {
 			sent = true
 		}
 	}

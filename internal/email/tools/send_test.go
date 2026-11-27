@@ -48,8 +48,7 @@ func (e *sendEnv) sender(id, addr string) *fake.Provider {
 	if err != nil {
 		e.t.Fatal(err)
 	}
-	a.SendEnabled = true
-	if err := e.st.UpdateAccount(context.Background(), a); err != nil {
+	if err := e.st.UpdateAccount(context.Background(), a.Owner, a.ID, store.AccountPatch{SendEnabled: store.Ptr(true)}); err != nil {
 		e.t.Fatal(err)
 	}
 	return p

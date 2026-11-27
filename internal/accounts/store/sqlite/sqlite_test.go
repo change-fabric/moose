@@ -29,6 +29,10 @@ func TestStoreConformance(t *testing.T) {
 	storetest.Run(t, func(t *testing.T) store.Store { return store.New(open(t)) })
 }
 
+func TestLegacyRecordsUpgrade(t *testing.T) {
+	storetest.RunLegacy(t, func(t *testing.T) store.Backend { return open(t) })
+}
+
 func TestPurgeExpired(t *testing.T) {
 	ctx := context.Background()
 	b := open(t)

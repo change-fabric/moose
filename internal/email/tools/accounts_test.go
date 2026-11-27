@@ -28,13 +28,13 @@ func seed(t *testing.T) store.Store {
 	t.Cleanup(func() { st.Close() })
 	sync := now.Add(-time.Hour)
 	for i, a := range []store.Account{
-		{Owner: "pat", ID: "acc_one", Provider: "gmail", ProviderUID: "work@example.com", Address: "work@example.com", DisplayName: "Pat Work",
+		{Owner: "pat", ID: "acc_one", Provider: store.ProviderGoogle, ProviderUID: "work@example.com", Address: "work@example.com", DisplayName: "Pat Work",
 			Nickname: "Work", Groups: []string{"jobs"}, ColorIndex: 0, Status: store.StatusOK, LastSyncAt: &sync, HourlyCap: 10, SendEnabled: true,
 			Caps: provider.Capabilities{Threads: true, Labels: true, SearchDialect: "gmail"}, RefreshToken: []byte("sealed-secret")},
-		{Owner: "pat", ID: "acc_two", Provider: "gmail", ProviderUID: "home@example.com", Address: "home@example.com",
+		{Owner: "pat", ID: "acc_two", Provider: store.ProviderGoogle, ProviderUID: "home@example.com", Address: "home@example.com",
 			Nickname: "Home Base", ColorIndex: 1, Status: store.StatusNeedsReauth, LastError: "invalid_grant", HourlyCap: 10,
 			Caps: provider.Capabilities{Threads: true}},
-		{Owner: "other", ID: "acc_three", Provider: "gmail", ProviderUID: "x@example.com", Address: "x@example.com", Nickname: "Theirs", Status: store.StatusOK, HourlyCap: 10},
+		{Owner: "other", ID: "acc_three", Provider: store.ProviderGoogle, ProviderUID: "x@example.com", Address: "x@example.com", Nickname: "Theirs", Status: store.StatusOK, HourlyCap: 10},
 	} {
 		a.Created, a.Updated = now.Add(time.Duration(i)*time.Second), now
 		if err := st.CreateAccount(ctx, a); err != nil {
@@ -86,7 +86,7 @@ func TestListAccountsReturnsEveryR1AndR6Field(t *testing.T) {
 	a := out.Accounts[0]
 	if a.AccountID != "acc_one" || a.Address != "work@example.com" || a.DisplayName != "Pat Work" ||
 		len(a.Groups) != 1 || a.ColorName != "Blue" || a.Status != "ok" || !a.SendEnabled || a.HourlyCap == nil || *a.HourlyCap != 10 ||
-		a.SentThisHour == nil || *a.SentThisHour != 1 || !a.Capabilities.Threads || a.LastSyncAt == nil || a.Provider != "gmail" {
+		a.SentThisHour == nil || *a.SentThisHour != 1 || !a.Capabilities.Threads || a.LastSyncAt == nil || a.Provider != store.ProviderGoogle {
 		t.Fatalf("account = %+v", a)
 	}
 	b := out.Accounts[1]

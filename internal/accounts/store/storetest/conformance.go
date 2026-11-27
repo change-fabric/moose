@@ -204,7 +204,7 @@ func Run(t *testing.T, newStore func(t *testing.T) store.Store) {
 
 	newAcct := func(owner, nick, addr string, color int) store.Account {
 		return store.Account{
-			Owner: owner, ID: store.NewAccountID(), Provider: "gmail", ProviderUID: addr, Address: addr,
+			Owner: owner, ID: store.NewAccountID(), Provider: store.ProviderGoogle, ProviderUID: addr, Address: addr,
 			Nickname: nick, ColorIndex: color, Status: store.StatusOK, HourlyCap: store.DefaultHourlyCap,
 			Caps:         provider.Capabilities{Threads: true, Labels: true, SearchDialect: provider.DialectGmail},
 			RefreshToken: []byte("sealed-" + addr),
@@ -288,11 +288,9 @@ func Run(t *testing.T, newStore func(t *testing.T) store.Store) {
 		if cur.ID != a.ID {
 			t.Fatalf("FindAccountByAddress id = %s, want %s", cur.ID, a.ID)
 		}
-		cur.RefreshToken = []byte("new-token")
-		cur.Status = store.StatusNeedsReauth
-		must(t, s.UpdateAccount(ctx, cur))
-		cur.Status = store.StatusOK
-		must(t, s.UpdateAccount(ctx, cur))
+		must(t, s.SetAccountCredential(ctx, "pat", cur.ID, []byte("new-token"), cur.Version))
+		must(t, s.UpdateAccount(ctx, "pat", cur.ID, store.AccountPatch{Status: store.Ptr(store.StatusNeedsReauth)}))
+		must(t, s.UpdateAccount(ctx, "pat", cur.ID, store.AccountPatch{Status: store.Ptr(store.StatusOK)}))
 		got, err := s.GetAccount(ctx, "pat", a.ID)
 		must(t, err)
 		if got.ID != a.ID || got.ColorIndex != 3 || got.Nickname != "Work" || string(got.RefreshToken) != "new-token" || got.Status != store.StatusOK {
@@ -306,28 +304,139 @@ func Run(t *testing.T, newStore func(t *testing.T) store.Store) {
 		}
 	})
 
+	t.Run("CredentialWriteIsVersioned", func(t *testing.T) {
+		s := newStore(t)
+		a := newAcct("pat", "Work", "a@x.example", 0)
+		must(t, s.CreateAccount(ctx, a))
+		cur, err := s.GetAccount(ctx, "pat", a.ID)
+		must(t, err)
+		must(t, s.SetAccountCredential(ctx, "pat", a.ID, []byte("rt-2"), cur.Version))
+		got, _ := s.GetAccount(ctx, "pat", a.ID)
+		if string(got.RefreshToken) != "rt-2" || got.Version != cur.Version+1 {
+			t.Fatalf("after write: token %q version %d (was %d)", got.RefreshToken, got.Version, cur.Version)
+		}
+		// A second writer that read the same version loses and changes nothing.
+		if err := s.SetAccountCredential(ctx, "pat", a.ID, []byte("rt-stale"), cur.Version); !errors.Is(err, store.ErrConflict) {
+			t.Fatalf("stale credential write err = %v, want ErrConflict", err)
+		}
+		got, _ = s.GetAccount(ctx, "pat", a.ID)
+		if string(got.RefreshToken) != "rt-2" {
+			t.Fatalf("a conflicting write changed the credential to %q", got.RefreshToken)
+		}
+		if err := s.SetAccountCredential(ctx, "pat", "acc_missing", []byte("x"), 0); !errors.Is(err, store.ErrNotFound) {
+			t.Fatalf("missing account err = %v, want ErrNotFound", err)
+		}
+		if err := s.SetAccountCredential(ctx, "other", a.ID, []byte("x"), got.Version); !errors.Is(err, store.ErrNotFound) {
+			t.Fatalf("another owner's account err = %v, want ErrNotFound", err)
+		}
+		if err := s.SetAccountCredential(ctx, "pat", a.ID, nil, got.Version); err == nil {
+			t.Fatal("an empty credential must be refused")
+		}
+		// Disconnecting bumps the version, so a write-back that read the old
+		// credential cannot bring the account back.
+		must(t, s.DisconnectAccount(ctx, "pat", a.ID, now))
+		if err := s.SetAccountCredential(ctx, "pat", a.ID, []byte("late"), got.Version); !errors.Is(err, store.ErrConflict) {
+			t.Fatalf("write-back after disconnect err = %v, want ErrConflict", err)
+		}
+		after, _ := s.GetAccount(ctx, "pat", a.ID)
+		if len(after.RefreshToken) != 0 || after.Status != store.StatusDisconnected {
+			t.Fatalf("disconnected account was revived: %+v", after)
+		}
+	})
+
+	// Both orderings of a display patch and a credential write end with the new
+	// credential and the patched field. The stale reader is the point: it holds
+	// a copy from before the other writer ran.
+	t.Run("PatchThenCredentialWrite", func(t *testing.T) {
+		s := newStore(t)
+		a := newAcct("pat", "Work", "a@x.example", 0)
+		must(t, s.CreateAccount(ctx, a))
+		stale, err := s.GetAccount(ctx, "pat", a.ID) // the refresher's read
+		must(t, err)
+		must(t, s.UpdateAccount(ctx, "pat", a.ID, store.AccountPatch{Nickname: store.Ptr("Renamed"), SendEnabled: store.Ptr(true)}))
+		must(t, s.SetAccountCredential(ctx, "pat", a.ID, []byte("rt-new"), stale.Version))
+		got, _ := s.GetAccount(ctx, "pat", a.ID)
+		if string(got.RefreshToken) != "rt-new" || got.Nickname != "Renamed" || !got.SendEnabled {
+			t.Fatalf("final record = token %q nickname %q send %v", got.RefreshToken, got.Nickname, got.SendEnabled)
+		}
+	})
+
+	t.Run("CredentialWriteThenPatchFromStaleRead", func(t *testing.T) {
+		s := newStore(t)
+		a := newAcct("pat", "Work", "a@x.example", 0)
+		must(t, s.CreateAccount(ctx, a))
+		stale, err := s.GetAccount(ctx, "pat", a.ID) // the patcher's read, before the rotation
+		must(t, err)
+		must(t, s.SetAccountCredential(ctx, "pat", a.ID, []byte("rt-new"), stale.Version))
+		// The patch is built from the stale read but carries only display
+		// fields, so it cannot put the old credential back.
+		must(t, s.UpdateAccount(ctx, "pat", stale.ID, store.AccountPatch{ColorIndex: store.Ptr(7), SendEnabled: store.Ptr(true)}))
+		got, _ := s.GetAccount(ctx, "pat", a.ID)
+		if string(got.RefreshToken) != "rt-new" || got.ColorIndex != 7 || !got.SendEnabled || got.Version != stale.Version+1 {
+			t.Fatalf("final record = token %q color %d send %v version %d", got.RefreshToken, got.ColorIndex, got.SendEnabled, got.Version)
+		}
+	})
+
+	t.Run("PatchLeavesUnsetFieldsAlone", func(t *testing.T) {
+		s := newStore(t)
+		a := newAcct("pat", "Work", "a@x.example", 4)
+		a.Groups = []string{"g"}
+		must(t, s.CreateAccount(ctx, a))
+		must(t, s.UpdateAccount(ctx, "pat", a.ID, store.AccountPatch{InviteEnabled: store.Ptr(true)}))
+		got, _ := s.GetAccount(ctx, "pat", a.ID)
+		if !got.InviteEnabled || got.Nickname != "Work" || got.ColorIndex != 4 || len(got.Groups) != 1 || got.Status != store.StatusOK ||
+			string(got.RefreshToken) != "sealed-a@x.example" {
+			t.Fatalf("patch touched unset fields: %+v", got)
+		}
+	})
+
+	t.Run("ConcurrentCredentialWritersOneWins", func(t *testing.T) {
+		s := newStore(t)
+		a := newAcct("pat", "Work", "a@x.example", 0)
+		must(t, s.CreateAccount(ctx, a))
+		cur, _ := s.GetAccount(ctx, "pat", a.ID)
+		const writers = 8
+		var wg sync.WaitGroup
+		var won, lost atomic.Int32
+		for i := 0; i < writers; i++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				switch err := s.SetAccountCredential(ctx, "pat", a.ID, []byte(fmt.Sprintf("rt-%d", i)), cur.Version); {
+				case err == nil:
+					won.Add(1)
+				case errors.Is(err, store.ErrConflict):
+					lost.Add(1)
+				default:
+					t.Errorf("unexpected error: %v", err)
+				}
+			}()
+		}
+		wg.Wait()
+		if won.Load() != 1 || lost.Load() != writers-1 {
+			t.Fatalf("won %d lost %d, want exactly one winner", won.Load(), lost.Load())
+		}
+	})
+
 	t.Run("RenameMovesNicknameRow", func(t *testing.T) {
 		s := newStore(t)
 		a, b := newAcct("pat", "Work", "a@x.example", 0), newAcct("pat", "Home", "b@x.example", 1)
 		must(t, s.CreateAccount(ctx, a))
 		must(t, s.CreateAccount(ctx, b))
-		a.Nickname = "Home"
-		if err := s.UpdateAccount(ctx, a); !errors.Is(err, store.ErrNicknameTaken) {
+		if err := s.UpdateAccount(ctx, "pat", a.ID, store.AccountPatch{Nickname: store.Ptr("Home")}); !errors.Is(err, store.ErrNicknameTaken) {
 			t.Fatalf("rename onto a taken nickname err = %v, want ErrNicknameTaken", err)
 		}
-		a.Nickname = "Office"
-		must(t, s.UpdateAccount(ctx, a))
+		must(t, s.UpdateAccount(ctx, "pat", a.ID, store.AccountPatch{Nickname: store.Ptr("Office")}))
 		must(t, s.CreateAccount(ctx, newAcct("pat", "Work", "c@x.example", 2))) // old slug is free again
 		if err := s.CreateAccount(ctx, newAcct("pat", "OFFICE", "d@x.example", 3)); !errors.Is(err, store.ErrNicknameTaken) {
 			t.Fatalf("new slug not reserved: %v", err)
 		}
-		a.Nickname = "OFFICE" // case-only change keeps the slug
-		must(t, s.UpdateAccount(ctx, a))
+		must(t, s.UpdateAccount(ctx, "pat", a.ID, store.AccountPatch{Nickname: store.Ptr("OFFICE")})) // case-only change keeps the slug
 		got, _ := s.GetAccount(ctx, "pat", a.ID)
 		if got.Nickname != "OFFICE" {
 			t.Fatalf("nickname = %q", got.Nickname)
 		}
-		if err := s.UpdateAccount(ctx, newAcct("pat", "Ghost", "g@x.example", 9)); !errors.Is(err, store.ErrNotFound) {
+		if err := s.UpdateAccount(ctx, "pat", "acc_ghost", store.AccountPatch{Nickname: store.Ptr("Ghost")}); !errors.Is(err, store.ErrNotFound) {
 			t.Fatalf("update of a missing account err = %v", err)
 		}
 	})

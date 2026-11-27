@@ -5,6 +5,7 @@ package fake
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"sort"
@@ -34,6 +35,16 @@ type Provider struct {
 	// and before it returns, so tests can fail the caller after the provider
 	// accepted the message.
 	SendHook func()
+	// ExchangeLikeMIME makes the fake behave like a provider that re-serialises
+	// mail (Microsoft Graph): stored drafts and delivered copies carry X-MS-*,
+	// Thread-Index and X-Unsent headers the sender never wrote. The noise is
+	// deterministic, so a draft still reads the same every time. Use it together
+	// with SetCapabilities(NativeDraftSend: true).
+	ExchangeLikeMIME bool
+	// LoseSendResponse makes SendDraft deliver the message and then return a
+	// transport error, as when a connection drops after the provider accepted
+	// the request.
+	LoseSendResponse bool
 	// Delay makes read calls wait this long (or until the context ends), to
 	// simulate a slow account.
 	Delay time.Duration
@@ -69,7 +80,7 @@ var _ provider.Provider = (*Provider)(nil)
 func New() *Provider {
 	return &Provider{
 		caps:        provider.Capabilities{Threads: true, Labels: true, SearchDialect: provider.DialectNone},
-		mailboxes:   []provider.Mailbox{{ID: "INBOX", Name: "INBOX", System: true}, {ID: "SENT", Name: "SENT", System: true}},
+		mailboxes:   []provider.Mailbox{{ID: provider.MailboxInbox, Name: "INBOX", System: true}, {ID: provider.MailboxSent, Name: "SENT", System: true}},
 		attachments: map[string][]byte{},
 		drafts:      map[string]*draft{},
 	}
@@ -321,6 +332,9 @@ func (p *Provider) GetDraftRaw(_ context.Context, id string) ([]byte, error) {
 	if len(d.raw) > provider.MaxDraftRaw {
 		return nil, fmt.Errorf("%w: draft %s", provider.ErrDraftTooLarge, id)
 	}
+	if p.ExchangeLikeMIME {
+		return exchangeLike(d.raw, true), nil
+	}
 	return append([]byte(nil), d.raw...), nil
 }
 
@@ -349,11 +363,18 @@ func (p *Provider) SendDraft(_ context.Context, raw []byte, threadID string) (pr
 	}
 	p.seq++
 	res := provider.SentMessage{MessageID: "s" + strconv.Itoa(p.seq), ThreadID: threadID}
-	p.sent = append(p.sent, Sent{Raw: append([]byte(nil), raw...), ThreadID: threadID, Result: res})
-	hook := p.SendHook
+	delivered := append([]byte(nil), raw...)
+	if p.ExchangeLikeMIME {
+		delivered = exchangeLike(raw, false)
+	}
+	p.sent = append(p.sent, Sent{Raw: delivered, ThreadID: threadID, Result: res})
+	hook, lost := p.SendHook, p.LoseSendResponse
 	p.mu.Unlock()
 	if hook != nil {
 		hook()
+	}
+	if lost {
+		return provider.SentMessage{}, errors.New("fake: connection reset by peer after the request was accepted")
 	}
 	return res, nil
 }
@@ -384,4 +405,18 @@ func (p *Provider) SetDraftRaw(id string, raw []byte) {
 	if d, ok := p.drafts[id]; ok {
 		d.raw = append([]byte(nil), raw...)
 	}
+}
+
+// exchangeLike returns raw with the headers Exchange adds when it stores or
+// relays a message, placed ahead of the sender's own headers. Drafts also get
+// X-Unsent. The values are fixed so the result is deterministic.
+func exchangeLike(raw []byte, draft bool) []byte {
+	noise := "X-MS-Exchange-Organization-AuthAs: Internal\r\n" +
+		"X-MS-Has-Attach:\r\n" +
+		"X-MS-TNEF-Correlator:\r\n" +
+		"Thread-Index: AdkQ3k0q0c1Vx0hQnE2m5l0Zr1rM0A==\r\n"
+	if draft {
+		noise += "X-Unsent: 1\r\n"
+	}
+	return append([]byte(noise), raw...)
 }

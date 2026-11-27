@@ -493,7 +493,7 @@ func (s *Service) trustOf(ctx context.Context, a store.Account, p provider.Provi
 	}
 	if p != nil && *lookups < maxSenderLookups {
 		*lookups++
-		res, err := p.Search(ctx, provider.Query{To: addr, Mailbox: "SENT", Limit: 1})
+		res, err := p.Search(ctx, provider.Query{To: addr, Mailbox: provider.MailboxSent, Limit: 1})
 		if err == nil && len(res.Messages) > 0 {
 			return store.TrustKnown, nil
 		}

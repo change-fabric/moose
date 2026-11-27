@@ -82,7 +82,7 @@ func (e *env) account(id, addr, status string, groups ...string) *fake.Provider 
 	e.t.Helper()
 	e.n++
 	a := store.Account{
-		Owner: "pat", ID: id, Provider: "gmail", ProviderUID: addr, Address: addr, Nickname: fmt.Sprintf("n%d", e.n), Groups: groups,
+		Owner: "pat", ID: id, Provider: store.ProviderGoogle, ProviderUID: addr, Address: addr, Nickname: fmt.Sprintf("n%d", e.n), Groups: groups,
 		ColorIndex: e.n, Status: status, HourlyCap: 10, Created: now.Add(time.Duration(e.n) * time.Second), Updated: now,
 	}
 	if err := e.st.CreateAccount(context.Background(), a); err != nil {
@@ -742,7 +742,7 @@ func TestThreadCapsTheWholeResultAndListsWhatItLeftOut(t *testing.T) {
 func TestCompositeIdsNeverReachAnotherOwnersAccount(t *testing.T) {
 	e := newEnv(t)
 	e.account("acc_mine", "me@a.com", store.StatusOK).AddMessage(msg("m1", "s@y.com", "s", "b", time.Hour))
-	other := store.Account{Owner: "other", ID: "acc_theirs", Provider: "gmail", ProviderUID: "t@x.com", Address: "t@x.com", Nickname: "t",
+	other := store.Account{Owner: "other", ID: "acc_theirs", Provider: store.ProviderGoogle, ProviderUID: "t@x.com", Address: "t@x.com", Nickname: "t",
 		Status: store.StatusOK, HourlyCap: 10, Created: now, Updated: now}
 	if err := e.st.CreateAccount(context.Background(), other); err != nil {
 		t.Fatal(err)

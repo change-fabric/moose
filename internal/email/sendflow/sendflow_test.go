@@ -75,7 +75,7 @@ func newRig(t *testing.T, live bool) *rig {
 	ap := flowtest.New()
 	ap.Now = clk.Now
 	prov := fake.New()
-	acct := store.Account{Owner: "pat", ID: "acc_one", Provider: "gmail", ProviderUID: "me@example.com", Address: "me@example.com",
+	acct := store.Account{Owner: "pat", ID: "acc_one", Provider: store.ProviderGoogle, ProviderUID: "me@example.com", Address: "me@example.com",
 		Nickname: "Me", Status: store.StatusOK, SendEnabled: true, HourlyCap: 10, Created: clk.Now(), Updated: clk.Now()}
 	if err := st.CreateAccount(ctx, acct); err != nil {
 		t.Fatal(err)
@@ -89,7 +89,7 @@ func newRig(t *testing.T, live bool) *rig {
 // addAccount adds a second account with its own provider.
 func (r *rig) addAccount(id, addr string) (store.Account, *fake.Provider) {
 	r.t.Helper()
-	a := store.Account{Owner: "pat", ID: id, Provider: "gmail", ProviderUID: addr, Address: addr, Nickname: id, Status: store.StatusOK,
+	a := store.Account{Owner: "pat", ID: id, Provider: store.ProviderGoogle, ProviderUID: addr, Address: addr, Nickname: id, Status: store.StatusOK,
 		SendEnabled: true, HourlyCap: 10, ColorIndex: 1, Created: r.clk.Now(), Updated: r.clk.Now()}
 	if err := r.st.CreateAccount(ctx, a); err != nil {
 		r.t.Fatal(err)
@@ -374,7 +374,7 @@ func TestFromAddressMustMatchTheAccountExactly(t *testing.T) {
 func TestSendRefusedWhileSendEnabledIsFalse(t *testing.T) {
 	r := newRig(t, true)
 	r.acct.SendEnabled = false
-	if err := r.st.UpdateAccount(ctx, r.acct); err != nil {
+	if err := r.st.UpdateAccount(ctx, r.acct.Owner, r.acct.ID, store.AccountPatch{SendEnabled: store.Ptr(false)}); err != nil {
 		t.Fatal(err)
 	}
 	_, err := r.svc.RequestSend(ctx, sendflow.RequestIn{Account: r.acct, FromAddress: r.acct.Address, DraftIDs: []string{r.draft("a@example.com", "s", "b")}})
@@ -391,7 +391,7 @@ func TestSendEnabledTurnedOffAfterApprovalBlocksDispatch(t *testing.T) {
 	id := r.approved(r.draft("a@example.com", "s", "b"))
 	fresh, _ := r.st.GetAccount(ctx, "pat", r.acct.ID)
 	fresh.SendEnabled = false
-	if err := r.st.UpdateAccount(ctx, fresh); err != nil {
+	if err := r.st.UpdateAccount(ctx, fresh.Owner, fresh.ID, store.AccountPatch{SendEnabled: store.Ptr(false)}); err != nil {
 		t.Fatal(err)
 	}
 	out := r.status(id)
@@ -403,7 +403,7 @@ func TestSendEnabledTurnedOffAfterApprovalBlocksDispatch(t *testing.T) {
 	}
 	// Turning it back on lets the same approval go through.
 	fresh.SendEnabled = true
-	_ = r.st.UpdateAccount(ctx, fresh)
+	_ = r.st.UpdateAccount(ctx, fresh.Owner, fresh.ID, store.AccountPatch{SendEnabled: store.Ptr(true)})
 	if out := r.status(id); out.Status != store.SendSent {
 		t.Fatalf("after re-enable: %+v", out)
 	}
@@ -414,7 +414,7 @@ func TestAccountNotOKAtDispatchBlocks(t *testing.T) {
 	id := r.approved(r.draft("a@example.com", "s", "b"))
 	fresh, _ := r.st.GetAccount(ctx, "pat", r.acct.ID)
 	fresh.Status = store.StatusNeedsReauth
-	_ = r.st.UpdateAccount(ctx, fresh)
+	_ = r.st.UpdateAccount(ctx, fresh.Owner, fresh.ID, store.AccountPatch{Status: store.Ptr(store.StatusNeedsReauth)})
 	if out := r.status(id); out.Status != sendflow.StatusBlocked || !strings.Contains(out.Note, "needs reauth") {
 		t.Fatalf("status = %+v", out)
 	}
@@ -996,7 +996,7 @@ func TestBatchItemsAreClaimedIndividuallyAndTheCapAppliesAcrossTheBatch(t *testi
 	r := newRig(t, true)
 	r.clk.t = time.Date(2026, 11, 25, 12, 50, 0, 0, time.UTC)
 	r.acct.HourlyCap = 2
-	if err := r.st.UpdateAccount(ctx, r.acct); err != nil {
+	if err := r.st.UpdateAccount(ctx, r.acct.Owner, r.acct.ID, store.AccountPatch{HourlyCap: store.Ptr(2)}); err != nil {
 		t.Fatal(err)
 	}
 	out := r.batch(r.draft("a@example.com", "one", "b"), r.draft("b@example.com", "two", "b"), r.draft("c@example.com", "three", "b"))

@@ -10,6 +10,7 @@ import (
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/change-fabric/moose/internal/accounts/fanout"
+	"github.com/change-fabric/moose/internal/accounts/store"
 	"github.com/change-fabric/moose/internal/audit"
 	"github.com/change-fabric/moose/internal/mcpkit"
 )
@@ -76,8 +77,7 @@ func (d Deps) registerAccountUpdate(s *sdk.Server) {
 			if err != nil {
 				return mcpkit.ErrorResult(ctx, "invalid_input", err.Error()), AccountOut{}, nil
 			}
-			a.Groups, a.Updated = groups, d.Now().UTC()
-			if err := d.Store.UpdateAccount(ctx, a); err != nil {
+			if err := d.Store.UpdateAccount(ctx, owner, a.ID, store.AccountPatch{Groups: &groups}); err != nil {
 				return mcpkit.ErrorResult(ctx, "internal", "could not save the groups"), AccountOut{}, nil
 			}
 		}
