@@ -13,6 +13,11 @@ output "google_redirect_uri" {
   value       = "${local.origin}/connect/google/callback"
 }
 
+output "microsoft_redirect_uri" {
+  description = "Redirect URI to register on the tenant's Microsoft Entra app registration (Web platform)."
+  value       = "${local.origin}/connect/microsoft/callback"
+}
+
 output "connect_url" {
   description = "Start here to sign in and connect Google accounts."
   value       = "${local.origin}/connect/login"
@@ -26,6 +31,16 @@ output "google_oauth_secret_arn" {
 output "google_oauth_secret_put" {
   description = "Command that stores the Google OAuth client without it passing through Terraform. Fill in the two values."
   value       = "aws secretsmanager put-secret-value --profile ${var.aws_profile} --region ${var.region} --secret-id ${aws_secretsmanager_secret.google_oauth.arn} --secret-string '{\"client_id\":\"<id>\",\"client_secret\":\"<secret>\"}'"
+}
+
+output "microsoft_oauth_secret_arn" {
+  description = "Secrets Manager secret that holds the Microsoft Entra client secret as JSON {client_secret}. Terraform never writes its value."
+  value       = aws_secretsmanager_secret.microsoft_oauth.arn
+}
+
+output "microsoft_oauth_secret_put" {
+  description = "Command that stores the Microsoft client secret without it passing through Terraform. Fill in the value."
+  value       = "aws secretsmanager put-secret-value --profile ${var.aws_profile} --region ${var.region} --secret-id ${aws_secretsmanager_secret.microsoft_oauth.arn} --secret-string '{\"client_secret\":\"<secret>\"}'"
 }
 
 output "email_function_name" {

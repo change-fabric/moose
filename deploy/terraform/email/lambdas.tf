@@ -33,6 +33,7 @@ data "aws_iam_policy_document" "email" {
     actions = ["secretsmanager:GetSecretValue"]
     resources = [
       aws_secretsmanager_secret.google_oauth.arn,
+      aws_secretsmanager_secret.microsoft_oauth.arn,
       aws_secretsmanager_secret.service_hmac.arn,
     ]
   }
@@ -47,19 +48,25 @@ module "email" {
   api_execution_arn = aws_apigatewayv2_api.this.execution_arn
   memory_size       = 512
 
-  environment = {
-    MOOSE_CONFIG                    = "/var/task/moose.yaml"
-    MOOSE_ENV                       = "prod"
-    MOOSE_DYNAMO_TABLE              = aws_dynamodb_table.email.name
-    MOOSE_EMAIL_BASE_URL            = local.origin
-    MOOSE_EMAIL_KMS_KEY_ID          = aws_kms_key.data.arn
-    MOOSE_EMAIL_ATTACH_BUCKET       = aws_s3_bucket.attachments.bucket
-    MOOSE_GOOGLE_OAUTH_SECRET_ARN   = aws_secretsmanager_secret.google_oauth.arn
-    MOOSE_EMAIL_OWNER               = var.owner
-    MOOSE_EMAIL_RP_ID               = var.domain_name
-    MOOSE_EMAIL_RECEIPT_PUBLIC_KEY  = data.aws_kms_public_key.receipt.public_key_pem
-    MOOSE_EMAIL_APPROVER_SECRET_ARN = aws_secretsmanager_secret.service_hmac.arn
-  }
+  # MOOSE_MICROSOFT_OAUTH_SECRET_ARN is the name internal/config reads. Setting
+  # it does not enable Microsoft: email.microsoft.enabled in the bundled
+  # moose.yaml does.
+  environment = merge({
+    MOOSE_CONFIG                     = "/var/task/moose.yaml"
+    MOOSE_ENV                        = "prod"
+    MOOSE_DYNAMO_TABLE               = aws_dynamodb_table.email.name
+    MOOSE_EMAIL_BASE_URL             = local.origin
+    MOOSE_EMAIL_KMS_KEY_ID           = aws_kms_key.data.arn
+    MOOSE_EMAIL_ATTACH_BUCKET        = aws_s3_bucket.attachments.bucket
+    MOOSE_GOOGLE_OAUTH_SECRET_ARN    = aws_secretsmanager_secret.google_oauth.arn
+    MOOSE_MICROSOFT_OAUTH_SECRET_ARN = aws_secretsmanager_secret.microsoft_oauth.arn
+    MOOSE_EMAIL_OWNER                = var.owner
+    MOOSE_EMAIL_RP_ID                = var.domain_name
+    MOOSE_EMAIL_RECEIPT_PUBLIC_KEY   = data.aws_kms_public_key.receipt.public_key_pem
+    MOOSE_EMAIL_APPROVER_SECRET_ARN  = aws_secretsmanager_secret.service_hmac.arn
+    },
+    var.microsoft_client_id == "" ? {} : { MOOSE_MICROSOFT_CLIENT_ID = var.microsoft_client_id },
+  )
 }
 
 data "aws_iam_policy_document" "approver" {

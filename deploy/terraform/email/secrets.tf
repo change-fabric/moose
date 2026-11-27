@@ -7,6 +7,17 @@ resource "aws_secretsmanager_secret" "google_oauth" {
   recovery_window_in_days = 7
 }
 
+# The tenant's Microsoft Entra app client secret, as JSON {"client_secret": ...}.
+# Same rule as Google: Terraform creates only the container and the owner puts
+# the value (see the microsoft_oauth_secret_put output), so the secret never
+# enters state. The client id is not secret and is var.microsoft_client_id.
+# Nothing reads this until email.microsoft.enabled is true.
+resource "aws_secretsmanager_secret" "microsoft_oauth" {
+  name                    = "${local.email_name}/microsoft-oauth"
+  description             = "Microsoft Entra client secret for moose-email: JSON {client_secret}"
+  recovery_window_in_days = 7
+}
+
 # HMAC key that authenticates moose-email to moose-approver's service API
 # (decision 29). Generated ephemerally and written write-only, so it is in
 # neither the plan nor the state.

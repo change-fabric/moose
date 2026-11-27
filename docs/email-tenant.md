@@ -52,6 +52,89 @@ app at 100 users over its lifetime, which is far above one owner.
    value to check against.
 5. Keep the client id and secret to hand for step 4 below.
 
+## 1b. Register the Microsoft Entra app (optional, for Outlook and Microsoft 365)
+
+Skip this if the tenant only uses Google. Microsoft stays off
+(`email.microsoft.enabled: false` in `deploy/lambda/moose-email.yaml`) until the
+acceptance run in `docs/acceptance/microsoft-mail.md` shows every step passed.
+Registering the app and applying Terraform does not turn it on. The owner does
+the registration and runs every `terraform apply`; the agent never does either.
+
+1. In the Microsoft Entra admin center (any tenant you control, even a free
+   one), go to **App registrations > New registration**.
+2. Supported account types: **Accounts in any organizational directory and
+   personal Microsoft accounts** (multi-tenant plus personal). moose signs in
+   through the `/common` authority.
+3. Redirect URI, platform **Web** (not SPA, not mobile):
+
+   ```
+   https://<domain_name>/connect/microsoft/callback
+   ```
+
+   After the apply, `terraform output microsoft_redirect_uri` prints the exact
+   value to check against.
+4. **Manifest**: set `requestedAccessTokenVersion` to `2` (under
+   `api` in the app manifest). Without it, personal accounts return v1 tokens
+   that moose cannot read.
+5. **API permissions > Microsoft Graph > Delegated**: `Mail.ReadWrite`,
+   `Mail.Send`, `offline_access`, `openid`, `profile`, `email`, `User.Read`.
+   Nothing else. All are requested at connect. `Mail.Send` is granted but unused
+   until you enable sending per account: moose's code and passkey approvals are
+   the only send gate. Do not click "Grant admin consent" for your own tenant
+   unless you want to; users consent themselves.
+6. **Certificates and secrets > New client secret**. Entra allows 24 months at
+   most. Copy the secret **value** (not the secret id) immediately; it is shown
+   once. Note the expiry date.
+7. Copy the **Application (client) id** from the Overview page.
+
+Then set two values in `prod.tfvars` (see step 2): `microsoft_client_id` and
+`microsoft_client_secret_expires_on` (YYYY-MM-DD, the date from step 6). The
+second creates a one-off reminder on the alerts topic 30 days before expiry.
+After the apply, store the client secret the same way as Google's:
+
+```
+terraform -chdir=deploy/terraform/email output -raw microsoft_oauth_secret_put
+```
+
+The secret is JSON `{"client_secret": "<value>"}`.
+
+### Unverified publisher and admin consent
+
+The app is an unverified multi-tenant app; publisher verification is deferred.
+Consequences to expect:
+
+- Users in a work or school tenant see an "unverified" label on the consent
+  screen. Click through it.
+- Many tenants block user consent to unverified apps. The connect page then
+  shows the admin-approval copy (AADSTS65001 or AADSTS90094). An administrator of
+  that tenant has to approve the app once, using the admin consent link the
+  connect page offers, and then the user connects again. There is no workaround
+  in moose.
+- Personal Outlook.com accounts consent on their own and are not affected.
+
+### Rotate the client secret
+
+The reminder fires 30 days before the date you recorded. If the secret expires
+unrotated, every Microsoft account moves to `needs_reauth` at once. Rotating
+needs no downtime and no reconnects, because refresh tokens belong to the app
+registration, not to the secret value.
+
+1. In Entra, **Certificates and secrets > New client secret** on the same app.
+   Keep the old secret in place for now. Copy the new value and its expiry.
+2. Store it:
+   `terraform -chdir=deploy/terraform/email output -raw microsoft_oauth_secret_put`,
+   filled in with the new value. Lambda reads the secret when a cold start
+   builds the connector, so force that: deploy any new zip, or change the
+   function's description or an environment variable and apply.
+3. Check: `email_list_accounts` shows the Microsoft accounts as `ok`, and a
+   `email_search` on one returns results.
+4. Delete the old secret in Entra.
+5. Set `microsoft_client_secret_expires_on` in `prod.tfvars` to the new date and
+   run the plan and apply (the owner does this). The old reminder is replaced.
+
+If the new secret fails (accounts show `needs_reauth`), put the old value back
+with the same command while it still exists, and try again.
+
 ## 2. Write the Terraform inputs
 
 From the repo root:
@@ -72,6 +155,7 @@ gitignored. In `prod.tfvars` set:
 | `github_repository_id` | `gh api repos/<owner>/<repo> --jq .id`. The deploy role trusts this immutable id, not the repository name. |
 | `budget_emails`, `budget_limit_usd` | Who is told at 80 percent of actual spend or 100 percent of forecast, and the monthly limit. |
 | `alarm_emails` | Optional. Defaults to `budget_emails`. Each address confirms an SNS subscription email once. |
+| `microsoft_client_id`, `microsoft_client_secret_expires_on` | Optional, Microsoft only (step 1b). The Entra application id, and the client secret's expiry date as YYYY-MM-DD, which schedules a reminder 30 days before. |
 | `env`, `region`, `aws_profile` | Environment name, region and CLI profile. |
 
 `api_throttle_rate` and `api_throttle_burst` bound the API. No function sets

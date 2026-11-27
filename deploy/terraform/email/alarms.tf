@@ -149,3 +149,89 @@ resource "aws_cloudwatch_metric_alarm" "table_write_throttles" {
   alarm_actions       = [aws_sns_topic.alerts.arn]
   ok_actions          = [aws_sns_topic.alerts.arn]
 }
+
+# ---- Microsoft client secret expiry reminder ----
+# An expired secret turns every Microsoft account needs_reauth at once. EventBridge
+# publishes one message to the alerts topic 30 days before the date the owner
+# records in var.microsoft_client_secret_expires_on. The cron has a year field,
+# so it fires once. Rotation steps: docs/email-tenant.md.
+
+locals {
+  ms_secret_remind_at = var.microsoft_client_secret_expires_on == null ? null : timeadd("${var.microsoft_client_secret_expires_on}T09:00:00Z", "-720h")
+}
+
+resource "aws_cloudwatch_event_rule" "microsoft_secret_expiry" {
+  count = local.ms_secret_remind_at == null ? 0 : 1
+
+  name                = "${local.email_name}-microsoft-secret-expiry"
+  description         = "One-off reminder, 30 days before the Microsoft client secret expires"
+  schedule_expression = "cron(${formatdate("mm hh DD MM", local.ms_secret_remind_at)} ? ${formatdate("YYYY", local.ms_secret_remind_at)})"
+}
+
+resource "aws_cloudwatch_event_target" "microsoft_secret_expiry" {
+  count = local.ms_secret_remind_at == null ? 0 : 1
+
+  rule = aws_cloudwatch_event_rule.microsoft_secret_expiry[0].name
+  arn  = aws_sns_topic.alerts.arn
+
+  input_transformer {
+    input_template = jsonencode("moose-email: the Microsoft client secret expires on ${var.microsoft_client_secret_expires_on} (30 days from now). Create a new secret in Entra and rotate it: see the rotation runbook in docs/email-tenant.md.")
+  }
+}
+
+# Setting a topic policy replaces SNS's default one, so the default statement
+# (same-account publishers, which CloudWatch alarms rely on) is restated here.
+data "aws_iam_policy_document" "alerts_topic" {
+  count = local.ms_secret_remind_at == null ? 0 : 1
+
+  statement {
+    sid = "DefaultSameAccount"
+    actions = [
+      "sns:Publish",
+      "sns:Subscribe",
+      "sns:Receive",
+      "sns:GetTopicAttributes",
+      "sns:SetTopicAttributes",
+      "sns:AddPermission",
+      "sns:RemovePermission",
+      "sns:DeleteTopic",
+      "sns:ListSubscriptionsByTopic",
+    ]
+    resources = [aws_sns_topic.alerts.arn]
+
+    principals {
+      type        = "AWS"
+      identifiers = ["*"]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "AWS:SourceOwner"
+      values   = [data.aws_caller_identity.current.account_id]
+    }
+  }
+
+  statement {
+    sid       = "AllowSecretExpiryRule"
+    actions   = ["sns:Publish"]
+    resources = [aws_sns_topic.alerts.arn]
+
+    principals {
+      type        = "Service"
+      identifiers = ["events.amazonaws.com"]
+    }
+
+    condition {
+      test     = "ArnEquals"
+      variable = "aws:SourceArn"
+      values   = [aws_cloudwatch_event_rule.microsoft_secret_expiry[0].arn]
+    }
+  }
+}
+
+resource "aws_sns_topic_policy" "alerts" {
+  count = local.ms_secret_remind_at == null ? 0 : 1
+
+  arn    = aws_sns_topic.alerts.arn
+  policy = data.aws_iam_policy_document.alerts_topic[0].json
+}
