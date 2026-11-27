@@ -67,7 +67,7 @@ type Seeder interface {
 // suites should expect, and the Seeder that arranges it.
 type Factory func(t *testing.T) (provider.Provider, Seeder)
 
-// PrimaryID returns the id of the account's primary calendar.
+// primaryID returns the id of the account's primary calendar.
 func primaryID(t *testing.T, p provider.Provider) string {
 	t.Helper()
 	cals, err := p.ListCalendars(t.Context())

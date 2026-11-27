@@ -77,11 +77,10 @@ const CodeUnsupportedHere = "unsupported_here"
 
 // Access roles a calendar can grant the account.
 const (
-	RoleOwner         = "owner"
-	RoleWriter        = "writer"
-	RoleReader        = "reader"
-	RoleFreeBusyOnly  = "free_busy_only"
-	RoleUnknownAccess = "unknown"
+	RoleOwner        = "owner"
+	RoleWriter       = "writer"
+	RoleReader       = "reader"
+	RoleFreeBusyOnly = "free_busy_only"
 )
 
 // Calendar is one calendar of an account.

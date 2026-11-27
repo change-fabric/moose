@@ -144,13 +144,6 @@ func (p *Provider) Notifications() []Notification {
 	return append([]Notification(nil), p.notes...)
 }
 
-// Count is the number of stored events, series masters counted once.
-func (p *Provider) Count() int {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	return len(p.events)
-}
-
 func (p *Provider) now() time.Time {
 	if p.Now != nil {
 		return p.Now()
