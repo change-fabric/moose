@@ -77,7 +77,10 @@ func run(log *slog.Logger) error {
 // registerTools adds the calendar tools. Without a public origin (local
 // development) a request has no token, so the dev identity stands in as owner.
 func registerTools(w *wiring, cfg config.Config) func(*sdk.Server) {
-	d := tools.Deps{Store: w.tools}
+	d := tools.Deps{Store: w.tools, CursorKey: w.cursorKey}
+	if w.providers != nil {
+		d.Providers = w.providers
+	}
 	if w.protect == nil && cfg.Env == config.EnvDev {
 		d.FallbackOwner = cfg.DevIdentity
 	}

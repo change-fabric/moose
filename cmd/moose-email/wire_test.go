@@ -15,6 +15,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 
 	"github.com/change-fabric/moose/internal/accounts/connect"
+	"github.com/change-fabric/moose/internal/accounts/oauthwire"
 	"github.com/change-fabric/moose/internal/approver/receipt"
 	"github.com/change-fabric/moose/internal/config"
 )
@@ -145,26 +146,26 @@ func TestGoogleCredentials(t *testing.T) {
 	good := func(context.Context, string) ([]byte, error) {
 		return []byte(`{"client_id":"i","client_secret":"s"}`), nil
 	}
-	id, sec, err := googleCredentials(ctx, config.Email{GoogleSecretARN: arn}, good)
+	id, sec, err := oauthwire.GoogleCredentials(ctx, config.Email{GoogleSecretARN: arn}, good)
 	if err != nil || id != "i" || sec != "s" {
 		t.Fatalf("from secret = %q %q %v", id, sec, err)
 	}
-	id, sec, err = googleCredentials(ctx, config.Email{GoogleClientID: "di", GoogleClientSecret: "ds"}, nil)
+	id, sec, err = oauthwire.GoogleCredentials(ctx, config.Email{GoogleClientID: "di", GoogleClientSecret: "ds"}, nil)
 	if err != nil || id != "di" || sec != "ds" {
 		t.Fatalf("from env = %q %q %v", id, sec, err)
 	}
-	for name, fn := range map[string]secretFunc{
+	for name, fn := range map[string]oauthwire.SecretFunc{
 		"read error":   func(context.Context, string) ([]byte, error) { return nil, errors.New("denied") },
 		"not json":     func(context.Context, string) ([]byte, error) { return []byte("plain"), nil },
 		"missing keys": func(context.Context, string) ([]byte, error) { return []byte(`{"client_id":"i"}`), nil },
 	} {
-		if _, _, err := googleCredentials(ctx, config.Email{GoogleSecretARN: arn}, fn); err == nil {
+		if _, _, err := oauthwire.GoogleCredentials(ctx, config.Email{GoogleSecretARN: arn}, fn); err == nil {
 			t.Errorf("%s: no error", name)
 		} else if strings.Contains(err.Error(), "plain") {
 			t.Errorf("%s: error echoes the secret: %v", name, err)
 		}
 	}
-	if _, _, err := googleCredentials(ctx, config.Email{GoogleSecretARN: arn}, nil); err == nil {
+	if _, _, err := oauthwire.GoogleCredentials(ctx, config.Email{GoogleSecretARN: arn}, nil); err == nil {
 		t.Error("ARN without a reader accepted")
 	}
 }

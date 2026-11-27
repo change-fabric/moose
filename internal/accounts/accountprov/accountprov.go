@@ -32,7 +32,11 @@ import (
 	"google.golang.org/api/option"
 
 	"github.com/change-fabric/moose/internal/accounts/envelope"
+	"github.com/change-fabric/moose/internal/accounts/scopes"
 	"github.com/change-fabric/moose/internal/accounts/store"
+	calgoogle "github.com/change-fabric/moose/internal/calendar/google"
+	calgraph "github.com/change-fabric/moose/internal/calendar/graph"
+	calprovider "github.com/change-fabric/moose/internal/calendar/provider"
 	"github.com/change-fabric/moose/internal/email/gmail"
 	"github.com/change-fabric/moose/internal/email/graph"
 	"github.com/change-fabric/moose/internal/email/provider"
@@ -67,7 +71,10 @@ type Source struct {
 	// GraphBaseURL overrides the Microsoft Graph root (tests point it at an
 	// httptest server). Empty means graphapi.DefaultBaseURL.
 	GraphBaseURL string
-	Now          func() time.Time
+	// GoogleCalendarBaseURL overrides the Google Calendar API root (tests).
+	// Empty means the public API.
+	GoogleCalendarBaseURL string
+	Now                   func() time.Time
 	// Log receives write-back failures. Nil discards them. It never receives a
 	// token.
 	Log *slog.Logger
@@ -100,6 +107,28 @@ func (s *Source) Provider(ctx context.Context, a store.Account) (provider.Provid
 			g.BaseURL = s.GraphBaseURL
 		}
 		return graph.New(g), nil
+	}
+	return nil, fmt.Errorf("accountprov: unsupported provider %q", a.Provider)
+}
+
+// CalendarProvider returns the calendar provider for account a, sharing the
+// access-token cache with mail: one refresh serves both services. Like Provider
+// it never contacts the token endpoint itself.
+func (s *Source) CalendarProvider(ctx context.Context, a store.Account) (calprovider.Provider, error) {
+	ts := tokenFunc(func() (*oauth2.Token, error) { return s.Token(ctx, a) })
+	switch a.Provider {
+	case store.ProviderGoogle:
+		c := calgoogle.New(ts)
+		if s.GoogleCalendarBaseURL != "" {
+			c.BaseURL = s.GoogleCalendarBaseURL
+		}
+		return c, nil
+	case store.ProviderMicrosoft:
+		g := graphapi.New(ts)
+		if s.GraphBaseURL != "" {
+			g.BaseURL = s.GraphBaseURL
+		}
+		return calgraph.New(g, calgraph.Options{Self: a.Address, Personal: scopes.IsPersonalMicrosoft(a.ProviderUID)}), nil
 	}
 	return nil, fmt.Errorf("accountprov: unsupported provider %q", a.Provider)
 }
