@@ -54,6 +54,9 @@ const (
 	StatusError       = "error"
 	StatusNeedsReauth = "needs_reauth"
 	StatusSkipped     = "skipped"
+	// StatusProviderDisabled marks an account whose provider is switched off in
+	// config; it is not called and its credentials are untouched.
+	StatusProviderDisabled = "provider_disabled"
 )
 
 // AccountReport says how one account fared in a fan-out call.
@@ -104,6 +107,8 @@ func Run[T any](ctx context.Context, lim Limits, accts []store.Account,
 			live = append(live, a)
 		case store.StatusNeedsReauth:
 			reports[i].Status, reports[i].Reason = StatusNeedsReauth, "reconnect_on_accounts_page"
+		case store.StatusProviderDisabled:
+			reports[i].Status, reports[i].Reason = StatusProviderDisabled, "provider_not_enabled"
 		default:
 			reports[i].Status, reports[i].Reason = StatusSkipped, "account_"+a.Status
 		}

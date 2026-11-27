@@ -61,6 +61,10 @@ const (
 	StatusNeedsReauth  = "needs_reauth"
 	StatusError        = "error"
 	StatusDisconnected = "disconnected"
+	// StatusProviderDisabled is never stored. GateProviders reports it for an
+	// account whose provider is switched off in config (email.microsoft.enabled
+	// false), so tools hide the account while its credentials stay untouched.
+	StatusProviderDisabled = "provider_disabled"
 )
 
 // Canonical provider names. Records written before Phase 4 say "gmail"; the
@@ -232,11 +236,15 @@ type AuthTxn struct {
 	TTL           time.Time `json:"-"`
 }
 
-// ConnectState is the server side of one Google connect attempt.
+// ConnectState is the server side of one connect attempt.
 type ConnectState struct {
 	Hash     string `json:"hash"`
 	Owner    string `json:"owner"`
 	Verifier string `json:"verifier"`
+	// Provider names the provider the attempt started for (ProviderGoogle or
+	// ProviderMicrosoft). A state written before the field existed reads as
+	// empty, which means Google.
+	Provider string `json:"provider,omitempty"`
 	// ReconnectID names the account being reconnected, if any.
 	ReconnectID string `json:"reconnect_id,omitempty"`
 	// Nickname is the requested nickname for a new account, if any.

@@ -842,14 +842,14 @@ func Run(t *testing.T, newStore func(t *testing.T) store.Store) {
 
 	t.Run("ConnectStateTakenOnce", func(t *testing.T) {
 		s := newStore(t)
-		c := store.ConnectState{Hash: "st1", Owner: "pat", Verifier: "v", ReconnectID: "acc_1", Expires: now.Add(10 * time.Minute)}
+		c := store.ConnectState{Hash: "st1", Owner: "pat", Verifier: "v", Provider: store.ProviderMicrosoft, ReconnectID: "acc_1", Expires: now.Add(10 * time.Minute)}
 		must(t, s.PutConnectState(ctx, c))
 		if err := s.PutConnectState(ctx, c); !errors.Is(err, store.ErrConflict) {
 			t.Fatalf("duplicate state err = %v", err)
 		}
 		got, err := s.TakeConnectState(ctx, "st1", now)
 		must(t, err)
-		if got.Verifier != "v" || got.ReconnectID != "acc_1" {
+		if got.Verifier != "v" || got.ReconnectID != "acc_1" || got.Provider != store.ProviderMicrosoft {
 			t.Fatalf("state = %+v", got)
 		}
 		if _, err := s.TakeConnectState(ctx, "st1", now); !errors.Is(err, store.ErrNotFound) {

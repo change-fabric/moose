@@ -74,7 +74,7 @@ func New(g *graphapi.Client) *Client { return &Client{g: g} }
 // folders rather than labels, search is $search/$filter, and sending goes
 // through a draft Exchange re-serialises (semantic match plus verify).
 func (c *Client) Capabilities() provider.Capabilities {
-	return provider.Capabilities{Threads: true, Labels: false, SearchDialect: provider.DialectGraph, NativeDraftSend: true}
+	return provider.Capabilities{Threads: true, Labels: false, SearchDialect: provider.DialectGraph, NativeDraftSend: true, ReadOnly: true}
 }
 
 // systemIDs returns the folder id to neutral id map for the five system

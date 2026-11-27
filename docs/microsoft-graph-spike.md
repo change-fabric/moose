@@ -25,6 +25,18 @@ decision it settles, commit the redacted fixture under
 | `message-references` | `internetMessageHeaders` on a single-message GET | UNVERIFIED | `$select=internetMessageHeaders` returns `References` for reply threading, so `GetMessage` needs no `/$value` call. `RawMessage` (`/$value`) exists for the draft and send phases and is size capped. | `GetMessage`, `RawMessage` |
 | `attachment-value` | `/attachments/{id}/$value` | UNVERIFIED | Streams the bytes of a `fileAttachment`. A `referenceAttachment` has no content and is rejected. Item attachments are not special-cased. | `OpenAttachment` |
 
+
+## Phase 6 rows (connect and provisioning)
+
+| Row | Probe | Status | What the code assumes | Where |
+| --- | --- | --- | --- | --- |
+| `msa-address` | `GET /me?$select=mail,userPrincipalName` for an outlook.com account, and the id_token claims for both account types | UNVERIFIED | `mail` can be null on a personal account, so the address is `mail`, falling back to `userPrincipalName`; no further fallback, a profile with neither is refused. The account identity is `tid.oid` from the id_token, which is present in a v2 token (`requestedAccessTokenVersion: 2`) for work, school and personal accounts alike. | `Profile` in `internal/accounts/connect/microsoft.go` |
+| `id-token-unsigned-read` | id_token returned by the /common token endpoint | UNVERIFIED | The id_token arrives straight from Entra over TLS in the code exchange, so its claims are read without checking the signature (OIDC Core 3.1.3.7); only `aud` (this client), `tid` and `oid` are enforced. | `parseIDToken` |
+| `scope-report` | `scope` in the token response, with and without the Graph prefix | UNVERIFIED | Entra reports granted scopes space separated, sometimes as `https://graph.microsoft.com/Mail.ReadWrite`; both spellings are accepted, compared case-insensitively. Mail.ReadWrite, Mail.Send and User.Read must all be present or nothing is saved. An omitted `scope` is taken as the full request. | `MissingScopes`, `Grant` |
+| `consent-error-codes` | `error` and `error_description` on the callback when a tenant blocks user consent | UNVERIFIED | AADSTS65001 and AADSTS90094 (or `error=consent_required`) mean an administrator must approve; any other `access_denied` means the user declined. The code is read from `error_description`. | `CallbackError` |
+| `admin-consent-link` | `https://login.microsoftonline.com/organizations/v2.0/adminconsent?client_id=...&scope=https://graph.microsoft.com/.default&redirect_uri=...` | UNVERIFIED | `organizations` is a valid generic tenant for an administrator whose tenant is not yet known, the redirect URI is the registered `/connect/microsoft/callback`, and the answer returns `admin_consent=True` with no `state`, which the callback acknowledges without a session. | `AdminConsentURL`, `adminConsentAnswer` |
+| `prompt-select-account` | `prompt=select_account` with `/common` on first connect, `login_hint` on reconnect | UNVERIFIED | The picker lets the owner choose a work or a personal sign-in; `login_hint` steers a reconnect to the mailbox it expects. No `prompt=consent` is sent, so a returning user is not re-asked. | `AuthOptions` |
+
 ## Rows other phases depend on (not touched here)
 
 | Row | Status | Needed by |
@@ -32,4 +44,3 @@ decision it settles, commit the redacted fixture under
 | `send-correlation` | UNVERIFIED, not yet coded | Phase 7 does not start unless it passes on both account types |
 | `calendar-preconditions` | UNVERIFIED, not yet coded | Phases 11 and 12 |
 | `draft-value-headers` | UNVERIFIED, not yet coded | Phase 7 |
-| `msa-address` | UNVERIFIED, not yet coded | Phase 6 |

@@ -18,7 +18,7 @@ import (
 
 func TestCapabilities(t *testing.T) {
 	c, _ := newGraph(t)
-	want := provider.Capabilities{Threads: true, Labels: false, SearchDialect: provider.DialectGraph, NativeDraftSend: true}
+	want := provider.Capabilities{Threads: true, Labels: false, SearchDialect: provider.DialectGraph, NativeDraftSend: true, ReadOnly: true}
 	if got := c.Capabilities(); got != want {
 		t.Errorf("capabilities = %+v, want %+v", got, want)
 	}

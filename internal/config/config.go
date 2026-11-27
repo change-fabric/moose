@@ -33,6 +33,10 @@ const (
 	StoreDynamo = "dynamo"
 
 	ProviderGmail = "gmail"
+
+	// Mail providers named by email.providers.
+	MailProviderGoogle    = "google"
+	MailProviderMicrosoft = "microsoft"
 )
 
 // Config is the full runtime configuration. The common fields apply to every
@@ -96,6 +100,13 @@ type Redaction struct {
 type Email struct {
 	Provider string    `yaml:"provider"`
 	Send     EmailSend `yaml:"send"`
+	// Providers lists the mail providers this deployment offers: google and/or
+	// microsoft, at least one. Omitted means [google]. Each has its own
+	// secrets. A listed provider is only usable once it is also enabled
+	// (Microsoft.Enabled).
+	Providers []string `yaml:"providers"`
+	// Microsoft configures the Microsoft (Entra, Graph) provider.
+	Microsoft EmailMicrosoft `yaml:"microsoft"`
 	// BaseURL is the public origin of this deployment (https://moose.example.org).
 	// Setting it turns on the Google connect page, whose OAuth redirect URI is
 	// BaseURL + /connect/google/callback.
@@ -135,6 +146,23 @@ type Email struct {
 	// GoogleClientID and GoogleClientSecret are the dev alternative to the secret.
 	GoogleClientID     string `yaml:"-"`
 	GoogleClientSecret string `yaml:"-"`
+}
+
+// EmailMicrosoft configures the Microsoft provider. Enabled defaults to false
+// and stays false in the production config until Graph drafts and send land and
+// the tenant acceptance run is recorded. While false, Microsoft accounts that
+// are already connected are hidden from tools (status provider_disabled) with
+// their credentials kept, and the connect routes answer not found.
+type EmailMicrosoft struct {
+	Enabled bool `yaml:"enabled"`
+	// ClientID is the Entra app registration's application (client) id.
+	ClientID string `yaml:"client_id"`
+	// ClientSecretRef names the Secrets Manager secret holding the app's client
+	// secret, as JSON {"client_secret": ...} or the bare secret string
+	// (MOOSE_MICROSOFT_OAUTH_SECRET_ARN overrides it).
+	ClientSecretRef string `yaml:"client_secret_ref"`
+	// ClientSecret is the dev alternative to the secret (MOOSE_MICROSOFT_CLIENT_SECRET).
+	ClientSecret string `yaml:"-"`
 }
 
 // EmailSend gates live sending. It stays false until an end-to-end approval
@@ -241,6 +269,9 @@ func applyEnv(cfg *Config, getenv func(string) string) {
 		set(&cfg.Email.GoogleSecretARN, "MOOSE_GOOGLE_OAUTH_SECRET_ARN")
 		set(&cfg.Email.GoogleClientID, "MOOSE_GOOGLE_CLIENT_ID")
 		set(&cfg.Email.GoogleClientSecret, "MOOSE_GOOGLE_CLIENT_SECRET")
+		set(&cfg.Email.Microsoft.ClientID, "MOOSE_MICROSOFT_CLIENT_ID")
+		set(&cfg.Email.Microsoft.ClientSecretRef, "MOOSE_MICROSOFT_OAUTH_SECRET_ARN")
+		set(&cfg.Email.Microsoft.ClientSecret, "MOOSE_MICROSOFT_CLIENT_SECRET")
 	}
 	if cfg.Approver != nil {
 		set(&cfg.Approver.RPID, "MOOSE_APPROVER_RP_ID")
@@ -337,6 +368,7 @@ func (c Config) ValidateEmail() error {
 	if e.Provider != ProviderGmail {
 		errs = append(errs, fmt.Errorf("email.provider %q is not %s", e.Provider, ProviderGmail))
 	}
+	errs = append(errs, e.validateProviders()...)
 	if e.BaseURL != "" {
 		errs = append(errs, c.validateEmailConnect()...)
 	}
@@ -346,6 +378,51 @@ func (c Config) ValidateEmail() error {
 		errs = append(errs, errors.New("email.owner, email.rp_id and email.receipt_public_key are required when env is prod: a public /mcp needs the OAuth server"))
 	}
 	return joinErrs(errs)
+}
+
+// ProviderList returns the configured providers, google when none are named.
+func (e *Email) ProviderList() []string {
+	if len(e.Providers) == 0 {
+		return []string{MailProviderGoogle}
+	}
+	return e.Providers
+}
+
+// HasProvider reports whether name is in email.providers.
+func (e *Email) HasProvider(name string) bool {
+	for _, p := range e.ProviderList() {
+		if p == name {
+			return true
+		}
+	}
+	return false
+}
+
+// MicrosoftEnabled reports whether the Microsoft provider is listed and on.
+func (e *Email) MicrosoftEnabled() bool {
+	return e.Microsoft.Enabled && e.HasProvider(MailProviderMicrosoft)
+}
+
+// validateProviders checks email.providers and email.microsoft.enabled.
+func (e *Email) validateProviders() []error {
+	var errs []error
+	seen := map[string]bool{}
+	for _, p := range e.Providers {
+		switch {
+		case p != MailProviderGoogle && p != MailProviderMicrosoft:
+			errs = append(errs, fmt.Errorf("email.providers entry %q is not %s or %s", p, MailProviderGoogle, MailProviderMicrosoft))
+		case seen[p]:
+			errs = append(errs, fmt.Errorf("email.providers lists %q twice", p))
+		}
+		seen[p] = true
+	}
+	if e.Providers != nil && len(e.Providers) == 0 {
+		errs = append(errs, errors.New("email.providers needs at least one of google, microsoft"))
+	}
+	if e.Microsoft.Enabled && !e.HasProvider(MailProviderMicrosoft) {
+		errs = append(errs, errors.New("email.microsoft.enabled is true but email.providers does not list microsoft"))
+	}
+	return errs
 }
 
 // OAuthEnabled reports whether the OAuth authorization server is configured.
@@ -416,10 +493,15 @@ func (c Config) validateEmailConnect() []error {
 	}
 	hasPair := e.GoogleClientID != "" && e.GoogleClientSecret != ""
 	switch {
+	case !e.HasProvider(MailProviderGoogle):
+		// Google is not offered: no Google client is needed.
 	case e.GoogleSecretARN == "" && !hasPair:
 		errs = append(errs, errors.New("MOOSE_GOOGLE_OAUTH_SECRET_ARN (or MOOSE_GOOGLE_CLIENT_ID and MOOSE_GOOGLE_CLIENT_SECRET in dev) is required"))
 	case e.GoogleSecretARN != "" && (e.GoogleClientID != "" || e.GoogleClientSecret != ""):
 		errs = append(errs, errors.New("set MOOSE_GOOGLE_OAUTH_SECRET_ARN or the client id and secret, not both"))
+	}
+	if e.MicrosoftEnabled() {
+		errs = append(errs, c.validateMicrosoftCredentials()...)
 	}
 	if c.Env == EnvProd {
 		if e.DevKey != "" {
@@ -428,6 +510,26 @@ func (c Config) validateEmailConnect() []error {
 		if e.GoogleClientSecret != "" {
 			errs = append(errs, errors.New("MOOSE_GOOGLE_CLIENT_SECRET is refused when env is prod; use MOOSE_GOOGLE_OAUTH_SECRET_ARN"))
 		}
+	}
+	return errs
+}
+
+// validateMicrosoftCredentials checks the Entra client an enabled Microsoft
+// provider connects with: a client id and exactly one source for the secret.
+func (c Config) validateMicrosoftCredentials() []error {
+	m := c.Email.Microsoft
+	var errs []error
+	if m.ClientID == "" {
+		errs = append(errs, errors.New("email.microsoft.client_id (or MOOSE_MICROSOFT_CLIENT_ID) is required when email.microsoft.enabled is true"))
+	}
+	switch {
+	case m.ClientSecretRef == "" && m.ClientSecret == "":
+		errs = append(errs, errors.New("email.microsoft.client_secret_ref (MOOSE_MICROSOFT_OAUTH_SECRET_ARN, or MOOSE_MICROSOFT_CLIENT_SECRET in dev) is required when email.microsoft.enabled is true"))
+	case m.ClientSecretRef != "" && m.ClientSecret != "":
+		errs = append(errs, errors.New("set email.microsoft.client_secret_ref or MOOSE_MICROSOFT_CLIENT_SECRET, not both"))
+	}
+	if c.Env == EnvProd && m.ClientSecret != "" {
+		errs = append(errs, errors.New("MOOSE_MICROSOFT_CLIENT_SECRET is refused when env is prod; use email.microsoft.client_secret_ref"))
 	}
 	return errs
 }

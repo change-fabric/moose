@@ -133,10 +133,24 @@ func (d Deps) writeAccount(ctx context.Context, owner, ref, from string) (store.
 		return store.Account{}, mcpkit.ErrorResult(ctx, sendflow.CodeFromMismatch,
 			"from_address "+quote(from)+" is not the address of account "+a.ID+" ("+a.Address+"); restate the account's exact address")
 	}
+	if a.Status == store.StatusProviderDisabled {
+		return store.Account{}, mcpkit.ErrorResult(ctx, "provider_disabled", a.Address+" belongs to a provider that is turned off on this server")
+	}
 	if a.Status != store.StatusOK {
 		return store.Account{}, mcpkit.ErrorResult(ctx, "account_unavailable", a.Address+" is "+strings.ReplaceAll(a.Status, "_", " ")+"; reconnect it on the moose accounts page")
 	}
 	return a, nil
+}
+
+// readOnlyRefusal answers unsupported_for_provider when the account's provider
+// can only read mail (Capabilities.ReadOnly), before anything is created,
+// approved or sent.
+func readOnlyRefusal(ctx context.Context, p provider.Provider, a store.Account) *sdk.CallToolResult {
+	if p.Capabilities().ReadOnly {
+		return mcpkit.ErrorResult(ctx, provider.CodeUnsupportedForProvider,
+			a.Address+" is a read-only "+a.Provider+" account: drafts and sending are not supported for it yet")
+	}
+	return nil
 }
 
 func quote(s string) string {
@@ -213,6 +227,9 @@ func (d Deps) createDraft(ctx context.Context, req *sdk.CallToolRequest, in Crea
 	p, err := d.provider(ctx, a)
 	if err != nil {
 		return d.providerError(ctx, err), DraftOut{}, nil
+	}
+	if bad := readOnlyRefusal(ctx, p, a); bad != nil {
+		return bad, DraftOut{}, nil
 	}
 
 	m := mailmsg.Message{From: fromHeader(a), To: in.To, Cc: in.Cc, Bcc: in.Bcc, Subject: in.Subject, Body: in.Body}
@@ -387,6 +404,9 @@ func (d Deps) updateDraft(ctx context.Context, req *sdk.CallToolRequest, in Upda
 	p, err := d.provider(ctx, a)
 	if err != nil {
 		return d.providerError(ctx, err), DraftOut{}, nil
+	}
+	if bad := readOnlyRefusal(ctx, p, a); bad != nil {
+		return bad, DraftOut{}, nil
 	}
 	var raw []byte
 	if err := d.retry429(ctx, func() (e error) { raw, e = p.GetDraftRaw(ctx, rawID); return }); err != nil {

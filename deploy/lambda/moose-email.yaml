@@ -8,6 +8,12 @@ store:
   dynamo_table: ""           # MOOSE_DYNAMO_TABLE
 email:
   provider: gmail
+  providers: [google]        # microsoft is added here only once it is accepted (see microsoft.enabled)
+  microsoft:
+    # Stays false in prod until phase 7 (Graph drafts and send) lands and the phase 8
+    # acceptance run is recorded. While false, connected Microsoft accounts are hidden from
+    # tools (provider_disabled) with their credentials kept, and /connect/microsoft is not found.
+    enabled: false
   send:
     live: true               # every send still needs a passkey approval and the hourly cap
   # Set by Terraform in the Lambda environment, not here, because they are per tenant:
