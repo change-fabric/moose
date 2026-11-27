@@ -34,8 +34,8 @@ func TestListAccountsThroughTheProtectedEndpoint(t *testing.T) {
 	defer w.store.Close()
 	now := time.Now().UTC()
 	for _, a := range []store.Account{
-		{Owner: "pat", ID: "acc_one", Provider: "gmail", ProviderUID: "a@example.com", Address: "a@example.com", Nickname: "Work", Status: store.StatusOK, HourlyCap: 10},
-		{Owner: "someone", ID: "acc_two", Provider: "gmail", ProviderUID: "b@example.com", Address: "b@example.com", Nickname: "Theirs", Status: store.StatusOK, HourlyCap: 10},
+		{Owner: "pat", ID: "acc_one", Provider: store.ProviderGoogle, ProviderUID: "a@example.com", Address: "a@example.com", Nickname: "Work", Status: store.StatusOK, HourlyCap: 10},
+		{Owner: "someone", ID: "acc_two", Provider: store.ProviderGoogle, ProviderUID: "b@example.com", Address: "b@example.com", Nickname: "Theirs", Status: store.StatusOK, HourlyCap: 10},
 	} {
 		a.Created, a.Updated = now, now
 		if err := w.store.CreateAccount(ctx, a); err != nil {

@@ -37,10 +37,16 @@ func (r *SendRow) setTTL(t time.Time)         { r.TTL = t }
 func (r *ContactBatchRow) setTTL(t time.Time) { r.TTL = t }
 func (e *AuditEvent) setTTL(t time.Time)      { e.ExpiresAt = t }
 
+// upgrader is implemented by records that normalise older stored forms on read.
+type upgrader interface{ upgrade() }
+
 func decode[T any](it Item) (T, error) {
 	var v T
 	if err := json.Unmarshal(it.Data, &v); err != nil {
 		return v, fmt.Errorf("emailstore: decode %s/%s: %w", it.PK, it.SK, err)
+	}
+	if u, ok := any(&v).(upgrader); ok {
+		u.upgrade()
 	}
 	if t, ok := any(&v).(ttlSetter); ok {
 		t.setTTL(it.TTL)
@@ -144,6 +150,7 @@ func (s *impl) CreateAccount(ctx context.Context, a Account) error {
 	if a.Created.IsZero() {
 		a.Created = now
 	}
+	a.upgrade()
 	a.Updated = now
 	if a.Status == "" {
 		a.Status = StatusOK
@@ -167,29 +174,33 @@ func (s *impl) CreateAccount(ctx context.Context, a Account) error {
 	return err
 }
 
-func (s *impl) UpdateAccount(ctx context.Context, a Account) error {
-	display, slug, err := NormalizeNickname(a.Nickname)
-	if err != nil {
-		return err
-	}
-	for range 10 {
-		old, it, err := load[Account](ctx, s.b, ownerPK(a.Owner), acctSK(a.ID))
+func (s *impl) UpdateAccount(ctx context.Context, owner, id string, p AccountPatch) error {
+	wantNick := ""
+	if p.Nickname != nil {
+		display, _, err := NormalizeNickname(*p.Nickname)
 		if err != nil {
 			return err
 		}
-		next := a
-		next.Owner, next.ID, next.Created = old.Owner, old.ID, old.Created
-		next.Nickname = display
+		wantNick = display
+	}
+	for range 10 {
+		old, it, err := load[Account](ctx, s.b, ownerPK(owner), acctSK(id))
+		if err != nil {
+			return err
+		}
+		next := old
+		applyPatch(&next, p, wantNick)
 		next.Updated = s.now().UTC()
 		it.Data = encode(next)
 		it.G1 = addrKey(next.Owner, next.Address)
 		it.Ver++
 		ops := []Op{{Kind: OpPut, Item: it, Cond: Cond{Kind: CondVer, Ver: it.Ver - 1}}}
 		_, oldSlug, _ := NormalizeNickname(old.Nickname)
+		_, slug, _ := NormalizeNickname(next.Nickname)
 		if oldSlug != slug {
 			ops = append(ops,
-				Op{Kind: OpPut, Cond: Cond{Kind: CondAbsent}, Item: Item{PK: ownerPK(a.Owner), SK: nickSK(slug), Data: encode(pointer{a.ID})}},
-				Op{Kind: OpDelete, Item: Item{PK: ownerPK(a.Owner), SK: nickSK(oldSlug)}})
+				Op{Kind: OpPut, Cond: Cond{Kind: CondAbsent}, Item: Item{PK: ownerPK(owner), SK: nickSK(slug), Data: encode(pointer{id})}},
+				Op{Kind: OpDelete, Item: Item{PK: ownerPK(owner), SK: nickSK(oldSlug)}})
 		}
 		err = s.b.Transact(ctx, ops)
 		if i, failed := condIndex(err); failed {
@@ -200,7 +211,73 @@ func (s *impl) UpdateAccount(ctx context.Context, a Account) error {
 		}
 		return err
 	}
-	return fmt.Errorf("%w: too much contention on account %s", ErrConflict, a.ID)
+	return fmt.Errorf("%w: too much contention on account %s", ErrConflict, id)
+}
+
+// applyPatch copies the fields p sets onto a. It never touches the credential.
+func applyPatch(a *Account, p AccountPatch, nickname string) {
+	if p.Nickname != nil {
+		a.Nickname = nickname
+	}
+	if p.Groups != nil {
+		a.Groups = *p.Groups
+	}
+	if p.ColorIndex != nil {
+		a.ColorIndex = *p.ColorIndex
+	}
+	if p.HourlyCap != nil {
+		a.HourlyCap = *p.HourlyCap
+	}
+	if p.SendEnabled != nil {
+		a.SendEnabled = *p.SendEnabled
+	}
+	if p.InviteEnabled != nil {
+		a.InviteEnabled = *p.InviteEnabled
+	}
+	if p.Status != nil {
+		a.Status = *p.Status
+	}
+	if p.LastError != nil {
+		a.LastError = *p.LastError
+	}
+	if p.LastSyncAt != nil {
+		t := *p.LastSyncAt
+		a.LastSyncAt = &t
+	}
+	if p.DisplayName != nil {
+		a.DisplayName = *p.DisplayName
+	}
+	if p.Address != nil {
+		a.Address = *p.Address
+	}
+	if p.ProviderUID != nil {
+		a.ProviderUID = *p.ProviderUID
+	}
+	if p.Caps != nil {
+		a.Caps = *p.Caps
+	}
+	if p.Scopes != nil {
+		a.Scopes = *p.Scopes
+	}
+	if p.Services != nil {
+		a.Services = *p.Services
+	}
+}
+
+func (s *impl) SetAccountCredential(ctx context.Context, owner, id string, cred []byte, expectVersion int64) error {
+	if len(cred) == 0 {
+		return errors.New("emailstore: credential must not be empty")
+	}
+	_, err := modify(ctx, s.b, ownerPK(owner), acctSK(id), func(a *Account) error {
+		if a.Version != expectVersion {
+			return fmt.Errorf("%w: credential version is %d, caller read %d", ErrConflict, a.Version, expectVersion)
+		}
+		a.RefreshToken = append([]byte(nil), cred...)
+		a.Version++
+		a.Updated = s.now().UTC()
+		return nil
+	})
+	return err
 }
 
 func (s *impl) defaultID(ctx context.Context, owner string) (string, error) {
@@ -292,6 +369,7 @@ func (s *impl) SetDefaultAccount(ctx context.Context, owner, id string) error {
 func (s *impl) DisconnectAccount(ctx context.Context, owner, id string, now time.Time) error {
 	_, err := modify(ctx, s.b, ownerPK(owner), acctSK(id), func(a *Account) error {
 		a.RefreshToken = nil
+		a.Version++ // a write-back that read the old credential must not land
 		a.SendEnabled = false
 		a.Status = StatusDisconnected
 		a.LastError = ""

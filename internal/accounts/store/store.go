@@ -63,12 +63,35 @@ const (
 	StatusDisconnected = "disconnected"
 )
 
+// Canonical provider names. Records written before Phase 4 say "gmail"; the
+// store reads that as ProviderGoogle (see Account.upgrade) and rewrites the
+// record the next time it is patched.
+const (
+	ProviderGoogle      = "google"
+	ProviderMicrosoft   = "microsoft"
+	providerLegacyGmail = "gmail"
+)
+
+// Services an account can grant. A record with no Services is a legacy
+// mail-only account.
+const (
+	ServiceMail     = "mail"
+	ServiceCalendar = "calendar"
+)
+
+// ServiceGrant is what one service was actually granted: the scopes the
+// provider reported, not the scopes that were asked for.
+type ServiceGrant struct {
+	Scopes    []string  `json:"scopes,omitempty"`
+	GrantedAt time.Time `json:"granted_at"`
+}
+
 // Account is one connected mailbox. IDs are opaque ("acc_<base32>") and never
 // the address. IsDefault is derived on read from the owner's default pointer.
 type Account struct {
 	Owner string `json:"owner"`
 	ID    string `json:"id"`
-	// Provider names the mailbox provider ("gmail").
+	// Provider names the mailbox provider: ProviderGoogle or ProviderMicrosoft.
 	Provider string `json:"provider"`
 	// ProviderUID is the provider's stable identity for the mailbox, used to
 	// recognise a reconnect: for Gmail it is the lowercased profile address.
@@ -76,22 +99,32 @@ type Account struct {
 	Address     string `json:"address"`
 	DisplayName string `json:"display_name,omitempty"`
 	// Nickname is the display form; its slug is unique per owner.
-	Nickname    string                `json:"nickname"`
-	Groups      []string              `json:"groups,omitempty"`
-	IsDefault   bool                  `json:"-"`
-	ColorIndex  int                   `json:"color_index"`
-	Status      string                `json:"status"`
-	LastSyncAt  *time.Time            `json:"last_sync_at,omitempty"`
-	LastError   string                `json:"last_error,omitempty"`
-	SendEnabled bool                  `json:"send_enabled"`
-	HourlyCap   int                   `json:"hourly_cap"`
-	Caps        provider.Capabilities `json:"capabilities"`
-	Scopes      []string              `json:"scopes,omitempty"`
-	// RefreshToken is the envelope-sealed Google refresh token. Empty once
-	// the account is disconnected.
-	RefreshToken []byte    `json:"refresh_token,omitempty"`
-	Created      time.Time `json:"created"`
-	Updated      time.Time `json:"updated"`
+	Nickname    string     `json:"nickname"`
+	Groups      []string   `json:"groups,omitempty"`
+	IsDefault   bool       `json:"-"`
+	ColorIndex  int        `json:"color_index"`
+	Status      string     `json:"status"`
+	LastSyncAt  *time.Time `json:"last_sync_at,omitempty"`
+	LastError   string     `json:"last_error,omitempty"`
+	SendEnabled bool       `json:"send_enabled"`
+	// InviteEnabled is the per-account calendar invite opt-in, off by default.
+	InviteEnabled bool                  `json:"invite_enabled,omitempty"`
+	HourlyCap     int                   `json:"hourly_cap"`
+	Caps          provider.Capabilities `json:"capabilities"`
+	// Scopes is every scope the provider reports as granted, across services.
+	Scopes []string `json:"scopes,omitempty"`
+	// Services records what each service was granted. Absent on legacy records,
+	// where the store defaults it to {mail}.
+	Services map[string]ServiceGrant `json:"services,omitempty"`
+	// RefreshToken is the envelope-sealed provider refresh token. Empty once
+	// the account is disconnected. Only SetAccountCredential changes it after
+	// creation.
+	RefreshToken []byte `json:"refresh_token,omitempty"`
+	// Version counts credential writes. SetAccountCredential is conditional on
+	// it, so two refreshers that read the same version cannot both write back.
+	Version int64     `json:"version,omitempty"`
+	Created time.Time `json:"created"`
+	Updated time.Time `json:"updated"`
 }
 
 // OAuthClient is a dynamically registered MCP client.
@@ -353,10 +386,18 @@ type Accounts interface {
 	// CreateAccount writes the account and its nickname row atomically.
 	// ErrConflict if the id exists, ErrNicknameTaken if the slug is used.
 	CreateAccount(ctx context.Context, a Account) error
-	// UpdateAccount replaces the account's mutable fields (everything but
-	// Owner, ID, Created and IsDefault) and moves the nickname row on rename.
-	// ErrNotFound, ErrNicknameTaken.
-	UpdateAccount(ctx context.Context, a Account) error
+	// UpdateAccount applies p to the account: only the fields p sets change, on
+	// a fresh read, so a concurrent credential write is never overwritten and
+	// the credential is never written here at all. It moves the nickname row on
+	// rename. ErrNotFound, ErrNicknameTaken.
+	UpdateAccount(ctx context.Context, owner, id string, p AccountPatch) error
+	// SetAccountCredential replaces the sealed credential and bumps Version, but
+	// only if the stored Version equals expectVersion (ErrConflict otherwise:
+	// reload, re-read the credential and retry). Nothing else on the record
+	// changes. ErrNotFound if the account is gone. Disconnecting bumps
+	// Version too, so a write-back that read the credential before a disconnect
+	// cannot revive the account.
+	SetAccountCredential(ctx context.Context, owner, id string, cred []byte, expectVersion int64) error
 	GetAccount(ctx context.Context, owner, id string) (Account, error)
 	// ListAccounts returns every account of owner, oldest first.
 	ListAccounts(ctx context.Context, owner string) ([]Account, error)
@@ -368,6 +409,41 @@ type Accounts interface {
 	// status to disconnected. The nickname row and id are kept, so a later
 	// reconnect keeps the same identity.
 	DisconnectAccount(ctx context.Context, owner, id string, now time.Time) error
+}
+
+// AccountPatch is a partial update of an account's non-credential fields. A nil
+// field is left alone. The sealed credential is deliberately not here.
+type AccountPatch struct {
+	Nickname      *string
+	Groups        *[]string
+	ColorIndex    *int
+	HourlyCap     *int
+	SendEnabled   *bool
+	InviteEnabled *bool
+	Status        *string
+	LastError     *string
+	LastSyncAt    *time.Time
+	// Profile fields, refreshed when an account reconnects.
+	DisplayName *string
+	Address     *string
+	ProviderUID *string
+	Caps        *provider.Capabilities
+	Scopes      *[]string
+	Services    *map[string]ServiceGrant
+}
+
+// Ptr returns a pointer to v, for building an AccountPatch.
+func Ptr[T any](v T) *T { return &v }
+
+// upgrade normalises a record written by an older version. It is the one place
+// legacy provider ids and a missing Services map are interpreted.
+func (a *Account) upgrade() {
+	if a.Provider == providerLegacyGmail {
+		a.Provider = ProviderGoogle
+	}
+	if len(a.Services) == 0 {
+		a.Services = map[string]ServiceGrant{ServiceMail: {Scopes: append([]string(nil), a.Scopes...), GrantedAt: a.Created}}
+	}
 }
 
 // OAuthClients holds DCR registrations.

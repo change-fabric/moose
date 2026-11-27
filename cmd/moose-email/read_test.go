@@ -84,7 +84,7 @@ func TestReadToolsThroughTheProtectedEndpointOnGmailStubs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := w.store.CreateAccount(ctx, store.Account{Owner: "pat", ID: "acc_one", Provider: "gmail", ProviderUID: "me@example.com",
+	if err := w.store.CreateAccount(ctx, store.Account{Owner: "pat", ID: "acc_one", Provider: store.ProviderGoogle, ProviderUID: "me@example.com",
 		Address: "me@example.com", Nickname: "Me", Status: store.StatusOK, HourlyCap: 10, RefreshToken: sealed, Created: now, Updated: now}); err != nil {
 		t.Fatal(err)
 	}

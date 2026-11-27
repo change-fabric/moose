@@ -1,0 +1,17 @@
+{
+  "owner": "pat",
+  "id": "acc_legacygmail0002",
+  "provider": "gmail",
+  "provider_uid": "bare@example.com",
+  "address": "bare@example.com",
+  "nickname": "Bare",
+  "color_index": 0,
+  "status": "needs_reauth",
+  "last_error": "invalid_grant",
+  "send_enabled": false,
+  "hourly_cap": 10,
+  "capabilities": {"threads": true, "labels": true, "search_dialect": "gmail", "native_draft_send": false},
+  "refresh_token": "c2VhbGVkLWJhcmU=",
+  "created": "2026-02-03T04:05:06Z",
+  "updated": "2026-02-03T04:05:06Z"
+}

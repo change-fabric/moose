@@ -54,6 +54,11 @@ func TestStoreConformance(t *testing.T) {
 	storetest.Run(t, func(t *testing.T) store.Store { return dynamo.NewStore(c, newTable(t, c)) })
 }
 
+func TestLegacyRecordsUpgrade(t *testing.T) {
+	c := client(t)
+	storetest.RunLegacy(t, func(t *testing.T) store.Backend { return dynamo.New(c, newTable(t, c)) })
+}
+
 // The ttl attribute DynamoDB's sweeper reads must be a Number of epoch seconds,
 // and the table must have ttl enabled on that attribute.
 func TestTTLAttributeIsEpochSeconds(t *testing.T) {

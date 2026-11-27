@@ -362,8 +362,38 @@ func decode(s string) ([]byte, error) {
 	return base64.RawURLEncoding.DecodeString(strings.TrimRight(s, "="))
 }
 
+// rateLimited builds the typed rate-limit error, carrying Retry-After when
+// Google sent it as whole seconds or an HTTP date.
+func rateLimited(ge *googleapi.Error, cause error) error {
+	return &provider.RateLimitError{RetryAfter: parseRetryAfter(ge.Header.Get("Retry-After"), time.Now()), Err: cause}
+}
+
+// parseRetryAfter reads a Retry-After value (seconds or HTTP date). Anything
+// unusable is zero, meaning no hint.
+func parseRetryAfter(v string, now time.Time) time.Duration {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return 0
+	}
+	if n, err := strconv.Atoi(v); err == nil {
+		if n < 0 {
+			return 0
+		}
+		return time.Duration(n) * time.Second
+	}
+	if t, err := http.ParseTime(v); err == nil {
+		if d := t.Sub(now); d > 0 {
+			return d
+		}
+	}
+	return 0
+}
+
 // mapErr turns Google API errors into the provider sentinels.
 func mapErr(err error) error {
+	if err == nil {
+		return nil
+	}
 	var ge *googleapi.Error
 	if errors.As(err, &ge) {
 		switch ge.Code {
@@ -374,11 +404,11 @@ func mapErr(err error) error {
 		case http.StatusBadRequest:
 			return fmt.Errorf("%w: %v", provider.ErrInvalidQuery, err)
 		case http.StatusTooManyRequests:
-			return fmt.Errorf("%w: %v", provider.ErrRateLimited, err)
+			return rateLimited(ge, err)
 		case http.StatusForbidden:
 			for _, e := range ge.Errors {
 				if e.Reason == "rateLimitExceeded" || e.Reason == "userRateLimitExceeded" {
-					return fmt.Errorf("%w: %v", provider.ErrRateLimited, err)
+					return rateLimited(ge, err)
 				}
 			}
 		}

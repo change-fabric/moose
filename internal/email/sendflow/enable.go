@@ -75,8 +75,7 @@ func (s *Service) Disable(ctx context.Context, a store.Account) error {
 		return errf(CodeInternal, "could not read the account")
 	}
 	if fresh.SendEnabled {
-		fresh.SendEnabled, fresh.Updated = false, s.now()
-		if err := s.Store.UpdateAccount(ctx, fresh); err != nil {
+		if err := s.Store.UpdateAccount(ctx, fresh.Owner, fresh.ID, store.AccountPatch{SendEnabled: store.Ptr(false)}); err != nil {
 			return errf(CodeInternal, "could not disable sending")
 		}
 	}
@@ -154,10 +153,10 @@ func (s *Service) finishEnable(ctx context.Context, ap store.Approval, a store.A
 	if fresh.Status != store.StatusOK {
 		return a, false, errf(CodeAccountNotReady, "%s is %s; reconnect it, then request the enable again", fresh.Address, fresh.Status)
 	}
-	fresh.SendEnabled, fresh.Updated = true, s.now()
-	if err := s.Store.UpdateAccount(ctx, fresh); err != nil {
+	if err := s.Store.UpdateAccount(ctx, fresh.Owner, fresh.ID, store.AccountPatch{SendEnabled: store.Ptr(true)}); err != nil {
 		return a, false, errf(CodeInternal, "could not enable sending")
 	}
+	fresh.SendEnabled = true
 	if _, err := s.Store.TransitionApproval(ctx, ap.ID, []string{store.ApprovalApproved, store.ApprovalPending}, store.ApprovalConsumed, false); err != nil {
 		s.logf("mark enable consumed", "err", err.Error())
 	}

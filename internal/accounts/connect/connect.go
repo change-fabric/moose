@@ -53,8 +53,7 @@ const SessionCookie = "moose_session"
 const (
 	csrfCookie = "moose_csrf"
 	// LoginPath is the dashboard sign-in, served by the authorization server.
-	LoginPath     = "/connect/login"
-	providerGmail = "gmail"
+	LoginPath = "/connect/login"
 )
 
 // Profile is what moose learns about a freshly authorized mailbox.
@@ -361,6 +360,32 @@ func (s *Server) callback(w http.ResponseWriter, r *http.Request) {
 
 var errWrongAccount = errors.New("wrong account")
 
+// writeCredential stores a freshly sealed credential, re-reading the version
+// and trying once more if another writer (a token refresh) got there first.
+func (s *Server) writeCredential(ctx context.Context, owner, id string, sealed []byte) error {
+	for attempt := 0; ; attempt++ {
+		cur, err := s.d.Store.GetAccount(ctx, owner, id)
+		if err != nil {
+			return err
+		}
+		err = s.d.Store.SetAccountCredential(ctx, owner, id, sealed, cur.Version)
+		if errors.Is(err, store.ErrConflict) && attempt == 0 {
+			continue
+		}
+		return err
+	}
+}
+
+// mergeMailGrant records the mail grant while keeping any other service.
+func mergeMailGrant(have map[string]store.ServiceGrant, scopes []string, now time.Time) map[string]store.ServiceGrant {
+	out := make(map[string]store.ServiceGrant, len(have)+1)
+	for k, v := range have {
+		out[k] = v
+	}
+	out[store.ServiceMail] = store.ServiceGrant{Scopes: scopes, GrantedAt: now}
+	return out
+}
+
 // saveAccount creates the account or reattaches the same Google identity to its
 // existing one, so a reconnect keeps the id, colour and nickname.
 func (s *Server) saveAccount(ctx context.Context, owner string, st store.ConnectState, p Profile, refresh string) (store.Account, error) {
@@ -397,16 +422,27 @@ func (s *Server) saveAccount(ctx context.Context, owner string, st store.Connect
 		if err != nil {
 			return store.Account{}, err
 		}
-		a := *existing
-		a.RefreshToken, a.Status, a.LastError = sealed, store.StatusOK, ""
-		a.Address, a.ProviderUID, a.Caps, a.Scopes = p.Address, uid, p.Caps, scopes
-		if p.DisplayName != "" {
-			a.DisplayName = p.DisplayName
+		// The credential goes first, then the profile and status, so a crash
+		// between the two leaves the account needing reauth rather than "ok"
+		// with a stale credential.
+		if err := s.writeCredential(ctx, owner, existing.ID, sealed); err != nil {
+			return store.Account{}, err
 		}
-		return a, s.d.Store.UpdateAccount(ctx, a)
+		patch := store.AccountPatch{
+			Status: store.Ptr(store.StatusOK), LastError: store.Ptr(""),
+			Address: store.Ptr(p.Address), ProviderUID: store.Ptr(uid), Caps: store.Ptr(p.Caps), Scopes: store.Ptr(scopes),
+			Services: store.Ptr(mergeMailGrant(existing.Services, scopes, now)),
+		}
+		if p.DisplayName != "" {
+			patch.DisplayName = store.Ptr(p.DisplayName)
+		}
+		if err := s.d.Store.UpdateAccount(ctx, owner, existing.ID, patch); err != nil {
+			return store.Account{}, err
+		}
+		return s.d.Store.GetAccount(ctx, owner, existing.ID)
 	}
 	a := store.Account{
-		Owner: owner, ID: store.NewAccountID(), Provider: providerGmail, ProviderUID: uid, Address: p.Address,
+		Owner: owner, ID: store.NewAccountID(), Provider: store.ProviderGoogle, ProviderUID: uid, Address: p.Address,
 		DisplayName: p.DisplayName, ColorIndex: len(accts), Status: store.StatusOK,
 		SendEnabled: false, HourlyCap: store.DefaultHourlyCap, Caps: p.Caps, Scopes: scopes,
 		IsDefault: len(accts) == 0, Created: now, Updated: now,
@@ -493,8 +529,7 @@ func (s *Server) disableSend(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if a.SendEnabled {
-		a.SendEnabled = false
-		if err := s.d.Store.UpdateAccount(r.Context(), a); err != nil {
+		if err := s.d.Store.UpdateAccount(r.Context(), owner, a.ID, store.AccountPatch{SendEnabled: store.Ptr(false)}); err != nil {
 			s.internal(w, "disable send", err)
 			return
 		}

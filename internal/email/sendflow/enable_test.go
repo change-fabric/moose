@@ -15,7 +15,7 @@ func (r *rig) offAccount() store.Account {
 	r.t.Helper()
 	a, _ := r.st.GetAccount(ctx, "pat", r.acct.ID)
 	a.SendEnabled = false
-	if err := r.st.UpdateAccount(ctx, a); err != nil {
+	if err := r.st.UpdateAccount(ctx, a.Owner, a.ID, store.AccountPatch{SendEnabled: store.Ptr(false)}); err != nil {
 		r.t.Fatal(err)
 	}
 	r.acct = a
@@ -84,7 +84,7 @@ func TestEnableRejectsAReceiptForAnotherAccountOrKindOrExpiry(t *testing.T) {
 	a := r.offAccount()
 	b, _ := r.addAccount("acc_two", "two@example.com")
 	b.SendEnabled = false
-	if err := r.st.UpdateAccount(ctx, b); err != nil {
+	if err := r.st.UpdateAccount(ctx, b.Owner, b.ID, store.AccountPatch{SendEnabled: store.Ptr(false)}); err != nil {
 		t.Fatal(err)
 	}
 	ra, err := r.svc.RequestEnable(ctx, a, a.Address)
@@ -215,7 +215,7 @@ func TestEnableRequestCarriesTheBannerFields(t *testing.T) {
 	r := newRig(t, true)
 	a := r.offAccount()
 	a.ColorIndex, a.DisplayName = 3, "Pat Work"
-	if err := r.st.UpdateAccount(ctx, a); err != nil {
+	if err := r.st.UpdateAccount(ctx, a.Owner, a.ID, store.AccountPatch{ColorIndex: store.Ptr(3), DisplayName: store.Ptr("Pat Work")}); err != nil {
 		t.Fatal(err)
 	}
 	r.addAccount("acc_two", "me@examp1e.com") // a look-alike address

@@ -154,7 +154,7 @@ func TestGetAttachmentNeverStoresExtractedText(t *testing.T) {
 func TestGetAttachmentErrors(t *testing.T) {
 	e := newEnv(t)
 	e.account("acc_mine", "me@a.com", store.StatusOK)
-	other := store.Account{Owner: "other", ID: "acc_theirs", Provider: "gmail", ProviderUID: "t@x.com", Address: "t@x.com", Nickname: "t",
+	other := store.Account{Owner: "other", ID: "acc_theirs", Provider: store.ProviderGoogle, ProviderUID: "t@x.com", Address: "t@x.com", Nickname: "t",
 		Status: store.StatusOK, HourlyCap: 10, Created: now, Updated: now}
 	if err := e.st.CreateAccount(context.Background(), other); err != nil {
 		t.Fatal(err)

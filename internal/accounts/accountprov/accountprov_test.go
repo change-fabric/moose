@@ -71,7 +71,7 @@ func newFixture(t *testing.T, tokenStatus int, tokenBody string) *fixture {
 		t.Fatal(err)
 	}
 	now := time.Now().UTC()
-	f.acct = store.Account{Owner: "pat", ID: "acc_one", Provider: "gmail", ProviderUID: "a@example.com", Address: "a@example.com",
+	f.acct = store.Account{Owner: "pat", ID: "acc_one", Provider: store.ProviderGoogle, ProviderUID: "a@example.com", Address: "a@example.com",
 		Nickname: "A", Status: store.StatusOK, HourlyCap: 10, RefreshToken: sealed, Created: now, Updated: now}
 	if err := st.CreateAccount(ctx, f.acct); err != nil {
 		t.Fatal(err)
