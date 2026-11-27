@@ -6,7 +6,7 @@
 resource "aws_apigatewayv2_api" "this" {
   name          = local.email_name
   protocol_type = "HTTP"
-  description   = "moose-email and moose-approver for ${var.domain_name}"
+  description   = "moose-email, moose-calendar and moose-approver for ${var.domain_name}"
   # Only the custom domain serves traffic, so the receipt rp id, the OAuth
   # issuer and the passkey origin can never be reached under another hostname.
   disable_execute_api_endpoint = true
@@ -93,6 +93,13 @@ resource "aws_apigatewayv2_integration" "email" {
   payload_format_version = "2.0"
 }
 
+resource "aws_apigatewayv2_integration" "calendar" {
+  api_id                 = aws_apigatewayv2_api.this.id
+  integration_type       = "AWS_PROXY"
+  integration_uri        = module.calendar.invoke_arn
+  payload_format_version = "2.0"
+}
+
 resource "aws_apigatewayv2_integration" "approver" {
   api_id                 = aws_apigatewayv2_api.this.id
   integration_type       = "AWS_PROXY"
@@ -112,6 +119,13 @@ locals {
     "GET /authorize/poll",
     "ANY /token",
     "ANY /connect/{proxy+}",
+  ]
+  # The calendar MCP endpoint. Its protected-resource metadata
+  # (/.well-known/oauth-protected-resource/calendar/mcp) and the authorization
+  # server are served by moose-email through the /.well-known/{proxy+} and OAuth
+  # routes above, so the calendar function needs no other route.
+  calendar_routes = [
+    "ANY /calendar/mcp",
   ]
   approver_routes = [
     "ANY /approve/r/{proxy+}",
@@ -134,4 +148,11 @@ resource "aws_apigatewayv2_route" "approver" {
   api_id    = aws_apigatewayv2_api.this.id
   route_key = each.value
   target    = "integrations/${aws_apigatewayv2_integration.approver.id}"
+}
+
+resource "aws_apigatewayv2_route" "calendar" {
+  for_each  = toset(local.calendar_routes)
+  api_id    = aws_apigatewayv2_api.this.id
+  route_key = each.value
+  target    = "integrations/${aws_apigatewayv2_integration.calendar.id}"
 }

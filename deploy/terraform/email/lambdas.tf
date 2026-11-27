@@ -1,4 +1,4 @@
-# The two functions. Each role gets exactly what its service uses; only the
+# The functions. Each role gets exactly what its service uses; only the
 # approver role holds kms:Sign on the receipt key.
 
 data "aws_iam_policy_document" "email" {
@@ -58,6 +58,72 @@ module "email" {
     MOOSE_EMAIL_BASE_URL             = local.origin
     MOOSE_EMAIL_KMS_KEY_ID           = aws_kms_key.data.arn
     MOOSE_EMAIL_ATTACH_BUCKET        = aws_s3_bucket.attachments.bucket
+    MOOSE_GOOGLE_OAUTH_SECRET_ARN    = aws_secretsmanager_secret.google_oauth.arn
+    MOOSE_MICROSOFT_OAUTH_SECRET_ARN = aws_secretsmanager_secret.microsoft_oauth.arn
+    MOOSE_EMAIL_OWNER                = var.owner
+    MOOSE_EMAIL_RP_ID                = var.domain_name
+    MOOSE_EMAIL_RECEIPT_PUBLIC_KEY   = data.aws_kms_public_key.receipt.public_key_pem
+    MOOSE_EMAIL_APPROVER_SECRET_ARN  = aws_secretsmanager_secret.service_hmac.arn
+    },
+    var.microsoft_client_id == "" ? {} : { MOOSE_MICROSOFT_CLIENT_ID = var.microsoft_client_id },
+  )
+}
+
+# moose-calendar serves /calendar/mcp. The OAuth authorization server (and the
+# protected-resource metadata for /calendar/mcp) stays in moose-email, so this
+# role holds the account table, the data key that opens stored refresh tokens
+# and the secrets the token refresh and the approver client need, and nothing
+# else: no attachments bucket, no receipt signing key. Its function has no
+# reserved concurrency: the account quota of 10 is shared and the API throttle
+# bounds it.
+data "aws_iam_policy_document" "calendar" {
+  statement {
+    sid = "Table"
+    actions = [
+      "dynamodb:GetItem",
+      "dynamodb:PutItem",
+      "dynamodb:UpdateItem",
+      "dynamodb:DeleteItem",
+      "dynamodb:Query",
+    ]
+    resources = [aws_dynamodb_table.email.arn, "${aws_dynamodb_table.email.arn}/index/*"]
+  }
+
+  statement {
+    sid       = "Seal"
+    actions   = ["kms:GenerateDataKey", "kms:Decrypt"]
+    resources = [aws_kms_key.data.arn]
+  }
+
+  statement {
+    sid     = "Secrets"
+    actions = ["secretsmanager:GetSecretValue"]
+    resources = [
+      aws_secretsmanager_secret.google_oauth.arn,
+      aws_secretsmanager_secret.microsoft_oauth.arn,
+      aws_secretsmanager_secret.service_hmac.arn,
+    ]
+  }
+}
+
+module "calendar" {
+  source = "../modules/lambda-service"
+
+  name              = local.calendar_name
+  zip_path          = var.calendar_zip_path
+  policy_json       = data.aws_iam_policy_document.calendar.json
+  api_execution_arn = aws_apigatewayv2_api.this.execution_arn
+  memory_size       = 512
+
+  # The same account table and origin as moose-email. Microsoft and the
+  # calendar resource are switched by the bundled moose.yaml
+  # (deploy/lambda/moose-calendar.yaml), not by these variables.
+  environment = merge({
+    MOOSE_CONFIG                     = "/var/task/moose.yaml"
+    MOOSE_ENV                        = "prod"
+    MOOSE_DYNAMO_TABLE               = aws_dynamodb_table.email.name
+    MOOSE_EMAIL_BASE_URL             = local.origin
+    MOOSE_EMAIL_KMS_KEY_ID           = aws_kms_key.data.arn
     MOOSE_GOOGLE_OAUTH_SECRET_ARN    = aws_secretsmanager_secret.google_oauth.arn
     MOOSE_MICROSOFT_OAUTH_SECRET_ARN = aws_secretsmanager_secret.microsoft_oauth.arn
     MOOSE_EMAIL_OWNER                = var.owner

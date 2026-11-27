@@ -129,6 +129,10 @@ Phase 12 is built ahead of the spike, against documented Graph and Google Calend
 | `google-removed-guest-notice` | `events.patch` with `sendUpdates=all` that drops a guest | UNVERIFIED (not Microsoft) | Google emails the removed guest; same assumption and same direction of error as `graph-removed-attendee-notice`. | `internal/approver/api/invite.go` (`RecipientsFor`) |
 | `google-dedupe-lookup` | `events.get` of the client-supplied event id after an unknown insert | UNVERIFIED (not Microsoft) | The id derived from the request id resolves to the event if the insert landed and is not found if it did not, so an unknown create is reconciled without a replay. | `internal/calendar/google/write.go` (`FindByDedupeKey`) |
 
+## Phase 13 (calendar Terraform and release)
+
+Phase 13 adds infrastructure and docs only and no new Graph or Google behaviour, so it adds no row. It does not lift any gate: `calendar-preconditions` and the other calendar rows above stay UNVERIFIED, and `docs/acceptance/calendar.md` stays NOT RUN until the owner applies and authorizes the run. Calendar stays behind `email.calendar.enabled=false`, invites behind `email.calendar.invite.live=false` and Microsoft behind `email.microsoft.enabled=false`.
+
 ## Rows other phases depend on
 
 | Row | Status | Needed by |
