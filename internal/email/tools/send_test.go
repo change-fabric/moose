@@ -309,7 +309,7 @@ func TestRequestSendThenStatusEndToEnd(t *testing.T) {
 	}
 }
 
-func TestSendThroughTheToolsReportsTheRetainedSourceDraft(t *testing.T) {
+func TestSendThroughTheToolsDiscardsTheSourceDraft(t *testing.T) {
 	e := newSendEnv(t, true)
 	p := e.sender("acc_a", "a@x.com")
 	d := e.draft("acc_a", "a@x.com", nil)
@@ -318,7 +318,7 @@ func TestSendThroughTheToolsReportsTheRetainedSourceDraft(t *testing.T) {
 	e.ap.Approve(req.RequestID)
 	var st sendflow.StatusOut
 	e.call(tools.ToolSendStatus, map[string]any{"request_id": req.RequestID}, &st)
-	if st.Status != store.SendSent || !st.SourceDraftRetained || st.SourceDraftID != d.DraftID || len(p.SentMessages()) != 1 {
+	if st.Status != store.SendSent || st.SourceDraftRetained || st.SourceDraftID != "" || len(p.SentMessages()) != 1 {
 		t.Fatalf("%+v", st)
 	}
 }
@@ -360,8 +360,8 @@ func TestBatchRequestThroughTheTool(t *testing.T) {
 	if st.Status != "done" || len(st.Items) != 2 || st.Items[0].Status != store.SendSent || st.Items[1].Status != sendflow.StatusDenied || len(p.SentMessages()) != 1 {
 		t.Fatalf("%+v sent %d", st, len(p.SentMessages()))
 	}
-	if st.Items[0].SourceDraftID != d1.DraftID {
-		t.Errorf("item source draft = %q", st.Items[0].SourceDraftID)
+	if st.Items[0].SourceDraftRetained {
+		t.Errorf("the sent item's unchanged draft must be discarded: %+v", st.Items[0])
 	}
 }
 

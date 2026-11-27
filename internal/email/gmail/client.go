@@ -244,6 +244,10 @@ func stripLeadingReceived(raw []byte) []byte {
 	}
 }
 
+func (c *Client) DeleteDraft(ctx context.Context, id string) error {
+	return mapErr(c.svc.Users.Drafts.Delete(userMe, id).Context(ctx).Do())
+}
+
 func (c *Client) SendDraft(ctx context.Context, raw []byte, threadID string) (provider.SentMessage, error) {
 	m, err := c.svc.Users.Messages.Send(userMe, &gmail.Message{
 		Raw:      base64.URLEncoding.EncodeToString(raw),

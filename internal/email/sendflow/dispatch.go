@@ -44,8 +44,9 @@ type ItemStatus struct {
 	Note        string `json:"note,omitempty"`
 	// ProviderMessageID is the id the provider gave the sent message.
 	ProviderMessageID string `json:"provider_message_id,omitempty"`
-	// SourceDraftRetained is true once the message is sent: the draft stays in
-	// the mailbox, and SourceDraftID names it so the owner can discard it.
+	// After a send, the source draft is deleted when it still matches the
+	// approved snapshot. SourceDraftRetained is true when it was kept (edited
+	// since the approval, or the delete failed); SourceDraftID names it.
 	SourceDraftRetained bool   `json:"source_draft_retained,omitempty"`
 	SourceDraftID       string `json:"source_draft_id,omitempty"`
 	// DryRun is true for would_send: email.send.live is off, so nothing left moose.
@@ -105,8 +106,7 @@ func (s *Service) fromRow(ap store.Approval, a store.Account, row store.SendRow)
 		ProviderMessageID: row.ProviderMessageID}}
 	switch row.State {
 	case store.SendSent:
-		o.SourceDraftRetained, o.SourceDraftID = true, ap.DraftID
-		o.Note = "The message was sent. The source draft is still in the mailbox; discard it if you do not need it."
+		o.Note = "The message was sent."
 	case store.SendWouldSend:
 		o.DryRun = true
 		o.Note = "Approved and ready, but live sending is switched off (email.send.live is false), so nothing was sent."
@@ -299,9 +299,37 @@ func (s *Service) afterClaim(ctx context.Context, ap store.Approval, a store.Acc
 		o.State = store.SendDispatching
 		return o, nil
 	}
-	// 9. After sent: enroll the approved trust changes and drop the snapshot.
+	// 9. After sent: enroll the approved trust changes and drop the snapshot,
+	// then discard the source draft if it is still what was approved.
 	s.finish(ctx, ap, a, next)
-	return s.fromRow(ap, a, next), nil
+	o := s.fromRow(ap, a, next)
+	if !s.discardDraft(ctx, p, ap) {
+		o.SourceDraftRetained, o.SourceDraftID = true, ap.DraftID
+		o.Note = "The message was sent. The source draft was kept because it changed after approval or could not be deleted; discard it if you do not need it."
+	}
+	return o, nil
+}
+
+// discardDraft deletes the source draft after a send, but only when its bytes
+// still hash to the approved snapshot, so later edits are never lost. It
+// reports whether the draft is gone.
+func (s *Service) discardDraft(ctx context.Context, p provider.Provider, ap store.Approval) bool {
+	raw, err := p.GetDraftRaw(ctx, ap.DraftID)
+	if errors.Is(err, provider.ErrNotFound) {
+		return true
+	}
+	if err != nil {
+		s.logf("read sent draft", "request", ap.ID, "err", err.Error())
+		return false
+	}
+	if sum := sha256.Sum256(raw); hex.EncodeToString(sum[:]) != ap.RFC822SHA256 {
+		return false
+	}
+	if err := p.DeleteDraft(ctx, ap.DraftID); err != nil && !errors.Is(err, provider.ErrNotFound) {
+		s.logf("delete sent draft", "request", ap.ID, "err", err.Error())
+		return false
+	}
+	return true
 }
 
 // dispatching handles a row found in dispatching. A call in flight keeps it
