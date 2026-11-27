@@ -31,6 +31,8 @@ type stub struct {
 	// override, when set, answers a request instead of the stub; it reports
 	// whether it did.
 	override func(w http.ResponseWriter, r *http.Request) bool
+	// rsvpComments are the comments RSVP patches carried.
+	rsvpComments []string
 }
 
 func newStub(t *testing.T) (*stub, *httptest.Server) {
@@ -40,6 +42,9 @@ func newStub(t *testing.T) (*stub, *httptest.Server) {
 	mux.HandleFunc("GET /calendar/v3/calendars/{cal}/events", s.events)
 	mux.HandleFunc("GET /calendar/v3/calendars/{cal}/events/{id}", s.event)
 	mux.HandleFunc("POST /calendar/v3/freeBusy", s.freeBusy)
+	mux.HandleFunc("POST /calendar/v3/calendars/{cal}/events", s.insert)
+	mux.HandleFunc("PATCH /calendar/v3/calendars/{cal}/events/{id}", s.patch)
+	mux.HandleFunc("DELETE /calendar/v3/calendars/{cal}/events/{id}", s.remove)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		s.hits[r.Method+" "+r.URL.Path]++
 		if s.override != nil && s.override(w, r) {
@@ -58,6 +63,10 @@ func (s *stub) fail(w http.ResponseWriter, err error) {
 	case errors.As(err, &rl):
 		code, reason = http.StatusTooManyRequests, "rateLimitExceeded"
 		w.Header().Set("Retry-After", strconv.Itoa(int(rl.RetryAfter.Seconds())))
+	case errors.Is(err, provider.ErrPreconditionFailed):
+		code, reason = http.StatusPreconditionFailed, "conditionNotMet"
+	case errors.Is(err, provider.ErrRejected), errors.Is(err, provider.ErrUnsupportedHere), errors.Is(err, provider.ErrInvalidTime), errors.Is(err, provider.ErrInvalidRecurrence):
+		code, reason = http.StatusForbidden, "forbidden"
 	case errors.Is(err, provider.ErrAuth):
 		code, reason = http.StatusUnauthorized, "authError"
 	case errors.Is(err, provider.ErrNotFound):
@@ -249,7 +258,13 @@ func (s seeder) Fail(t *testing.T, f providertest.Failure) {
 		s.p.Err = &provider.RateLimitError{RetryAfter: providertest.RetryAfter}
 	}
 }
-func (s seeder) Notified(t *testing.T) []providertest.Notification { return nil }
+func (s seeder) Notified(t *testing.T) []providertest.Notification {
+	var out []providertest.Notification
+	for _, n := range s.p.Notifications() {
+		out = append(out, providertest.Notification{Kind: n.Kind, To: n.To})
+	}
+	return out
+}
 
 func newClient(srv *httptest.Server) *google.Client {
 	c := google.New(nil)
@@ -257,9 +272,271 @@ func newClient(srv *httptest.Server) *google.Client {
 	return c
 }
 
+func TestConformanceWrite(t *testing.T) {
+	providertest.RunWrite(t, func(t *testing.T) (provider.Provider, providertest.Seeder) {
+		s, srv := newStub(t)
+		return newClient(srv), seeder{s.p}
+	})
+}
+
 func TestConformanceRead(t *testing.T) {
 	providertest.RunRead(t, func(t *testing.T) (provider.Provider, providertest.Seeder) {
 		s, srv := newStub(t)
 		return newClient(srv), seeder{s.p}
 	})
+}
+
+// ---- writes ----
+
+type wireTime struct {
+	Date     string `json:"date"`
+	DateTime string `json:"dateTime"`
+	TimeZone string `json:"timeZone"`
+}
+
+func (w wireTime) toTime() (provider.EventTime, error) {
+	if w.Date != "" {
+		return provider.EventTime{Date: w.Date}, nil
+	}
+	t, err := time.Parse(time.RFC3339, w.DateTime)
+	if err != nil {
+		return provider.EventTime{}, err
+	}
+	loc, err := time.LoadLocation(w.TimeZone)
+	if err != nil {
+		return provider.EventTime{}, err
+	}
+	return provider.EventTime{DateTime: t.In(loc), Zone: w.TimeZone}, nil
+}
+
+type wireAttendee struct {
+	Email       string `json:"email"`
+	DisplayName string `json:"displayName"`
+	Optional    bool   `json:"optional"`
+	Self        bool   `json:"self"`
+	Status      string `json:"responseStatus"`
+	Comment     string `json:"comment"`
+}
+
+func (a wireAttendee) toAttendee() provider.Attendee {
+	return provider.Attendee{Email: a.Email, Name: a.DisplayName, Optional: a.Optional}
+}
+
+func trimTag(h string) string { return strings.Trim(strings.TrimSpace(h), `"`) }
+
+// scopeOf picks what a Google write to id means: an instance id is one
+// occurrence; a master or one-off is the whole event.
+func (s *stub) scopeOf(r *http.Request, id string) (provider.EventRef, provider.Scope, error) {
+	ref := provider.EventRef{CalendarID: r.PathValue("cal"), EventID: id}
+	ev, err := s.p.GetEvent(r.Context(), ref)
+	if err != nil {
+		return ref, "", err
+	}
+	if ev.SeriesID != "" && ev.ID != ev.SeriesID {
+		return ref, provider.ScopeInstance, nil
+	}
+	return ref, provider.ScopeSeries, nil
+}
+
+func (s *stub) insert(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		ID          string         `json:"id"`
+		Summary     string         `json:"summary"`
+		Description string         `json:"description"`
+		Location    string         `json:"location"`
+		Start       wireTime       `json:"start"`
+		End         wireTime       `json:"end"`
+		Recurrence  []string       `json:"recurrence"`
+		Attendees   []wireAttendee `json:"attendees"`
+		Conference  map[string]any `json:"conferenceData"`
+		Reminders   *struct {
+			UseDefault bool `json:"useDefault"`
+			Overrides  []struct {
+				Minutes int `json:"minutes"`
+			} `json:"overrides"`
+		} `json:"reminders"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		s.fail(w, fmt.Errorf("%w: %v", provider.ErrInvalidQuery, err))
+		return
+	}
+	if r.URL.Query().Get("sendUpdates") == "" {
+		s.t.Errorf("insert must say sendUpdates")
+	}
+	if body.Conference != nil && r.URL.Query().Get("conferenceDataVersion") != "1" {
+		s.t.Errorf("a conferenceData request needs conferenceDataVersion=1")
+	}
+	st, err1 := body.Start.toTime()
+	en, err2 := body.End.toTime()
+	if err1 != nil || err2 != nil {
+		s.fail(w, fmt.Errorf("%w: bad time", provider.ErrInvalidQuery))
+		return
+	}
+	in := provider.EventInput{Title: body.Summary, Description: body.Description, Location: body.Location, Start: st, End: en, Video: body.Conference != nil}
+	if len(body.Recurrence) > 0 {
+		loc := time.UTC
+		if !st.IsAllDay() {
+			loc = st.DateTime.Location()
+		}
+		rec := provider.ParseRRULE(body.Recurrence, loc)
+		if rec.IsOpaque() {
+			s.fail(w, fmt.Errorf("%w: rule %q", provider.ErrInvalidQuery, rec.Native))
+			return
+		}
+		in.Recurrence = &rec
+	}
+	for _, a := range body.Attendees {
+		in.Attendees = append(in.Attendees, a.toAttendee())
+	}
+	if body.Reminders != nil && len(body.Reminders.Overrides) > 0 {
+		m := body.Reminders.Overrides[0].Minutes
+		in.ReminderMinutes = &m
+	}
+	ev, err := s.p.CreateEvent(r.Context(), r.PathValue("cal"), in, provider.CreateOptions{DedupeKey: body.ID})
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(gEvent(ev))
+}
+
+func (s *stub) patch(w http.ResponseWriter, r *http.Request) {
+	raw := map[string]json.RawMessage{}
+	if err := json.NewDecoder(r.Body).Decode(&raw); err != nil {
+		s.fail(w, fmt.Errorf("%w: %v", provider.ErrInvalidQuery, err))
+		return
+	}
+	ifVer := trimTag(r.Header.Get("If-Match"))
+	ref, scope, err := s.scopeOf(r, r.PathValue("id"))
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
+	// An attendees-only body that changes just the account's own answer is an RSVP.
+	if len(raw) == 1 && raw["attendees"] != nil {
+		var list []wireAttendee
+		_ = json.Unmarshal(raw["attendees"], &list)
+		cur, _ := s.p.GetEvent(r.Context(), ref)
+		if resp, comment, ok := rsvpOf(cur, list); ok {
+			if cur.Version != ifVer {
+				s.fail(w, fmt.Errorf("%w: have %s", provider.ErrPreconditionFailed, cur.Version))
+				return
+			}
+			if err := s.p.Respond(r.Context(), ref, resp, comment); err != nil {
+				s.fail(w, err)
+				return
+			}
+			s.rsvpComments = append(s.rsvpComments, comment)
+			now, _ := s.p.GetEvent(r.Context(), ref)
+			_ = json.NewEncoder(w).Encode(gEvent(now))
+			return
+		}
+	}
+	var patch provider.EventPatch
+	str := func(key string) *string {
+		v, ok := raw[key]
+		if !ok {
+			return nil
+		}
+		var x string
+		_ = json.Unmarshal(v, &x)
+		return &x
+	}
+	patch.Title, patch.Description, patch.Location = str("summary"), str("description"), str("location")
+	for key, dst := range map[string]**provider.EventTime{"start": &patch.Start, "end": &patch.End} {
+		if v, ok := raw[key]; ok {
+			var wt wireTime
+			_ = json.Unmarshal(v, &wt)
+			t, err := wt.toTime()
+			if err != nil {
+				s.fail(w, fmt.Errorf("%w: bad time", provider.ErrInvalidQuery))
+				return
+			}
+			*dst = &t
+		}
+	}
+	if v, ok := raw["recurrence"]; ok {
+		var lines []string
+		_ = json.Unmarshal(v, &lines)
+		if len(lines) == 0 {
+			patch.ClearRecurrence = true
+		} else {
+			rec := provider.ParseRRULE(lines, time.UTC)
+			patch.Recurrence = &rec
+		}
+	}
+	if v, ok := raw["attendees"]; ok {
+		var list []wireAttendee
+		_ = json.Unmarshal(v, &list)
+		out := []provider.Attendee{}
+		for _, a := range list {
+			out = append(out, a.toAttendee())
+		}
+		patch.Attendees = &out
+	}
+	if v, ok := raw["conferenceData"]; ok {
+		on := string(v) != "null"
+		patch.Video = &on
+	}
+	if v, ok := raw["reminders"]; ok {
+		var rm struct {
+			Overrides []struct {
+				Minutes int `json:"minutes"`
+			} `json:"overrides"`
+		}
+		_ = json.Unmarshal(v, &rm)
+		if len(rm.Overrides) > 0 {
+			m := rm.Overrides[0].Minutes
+			patch.ReminderMinutes = &m
+		}
+	}
+	ev, err := s.p.UpdateEvent(r.Context(), ref, scope, patch, ifVer)
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
+	_ = json.NewEncoder(w).Encode(gEvent(ev))
+}
+
+// rsvpOf reports whether list differs from cur only in the account's own
+// response, and what that response and comment are.
+func rsvpOf(cur provider.Event, list []wireAttendee) (provider.Response, string, bool) {
+	if len(list) != len(cur.Attendees) {
+		return "", "", false
+	}
+	var resp provider.Response
+	comment := ""
+	for i, a := range list {
+		if !strings.EqualFold(a.Email, cur.Attendees[i].Email) {
+			return "", "", false
+		}
+		if a.Self {
+			switch a.Status {
+			case "accepted":
+				resp = provider.RespondAccept
+			case "tentative":
+				resp = provider.RespondTentative
+			case "declined":
+				resp = provider.RespondDecline
+			default:
+				return "", "", false
+			}
+			comment = a.Comment
+		}
+	}
+	return resp, comment, resp != ""
+}
+
+func (s *stub) remove(w http.ResponseWriter, r *http.Request) {
+	ref, scope, err := s.scopeOf(r, r.PathValue("id"))
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
+	if err := s.p.DeleteEvent(r.Context(), ref, scope, trimTag(r.Header.Get("If-Match"))); err != nil {
+		s.fail(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }

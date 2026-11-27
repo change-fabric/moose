@@ -3,7 +3,9 @@
 // base-URL override for httptest. Events are read with singleEvents=true and
 // orderBy=startTime, so recurring events arrive as their occurrences.
 //
-// Writes arrive in a later phase; until then the write methods refuse.
+// Writes live in write.go: conditional on the event's etag (If-Match), with
+// sendUpdates=all so attendees are notified, and a client-supplied event id as
+// the create dedupe key.
 //
 // The whole calendar service stays behind email.calendar.enabled=false.
 package google
@@ -74,6 +76,11 @@ func (c *Client) Capabilities() provider.Capabilities {
 // ---- HTTP ----
 
 func (c *Client) do(ctx context.Context, method, path string, q url.Values, body any, out any) error {
+	return c.doH(ctx, method, path, q, nil, body, out)
+}
+
+// doH is do with extra request headers (If-Match on conditional writes).
+func (c *Client) doH(ctx context.Context, method, path string, q url.Values, hdr http.Header, body any, out any) error {
 	u := strings.TrimRight(c.BaseURL, "/") + path
 	if len(q) > 0 {
 		u += "?" + q.Encode()
@@ -91,6 +98,11 @@ func (c *Client) do(ctx context.Context, method, path string, q url.Values, body
 		return fmt.Errorf("google calendar: %w", err)
 	}
 	req.Header.Set("Accept", "application/json")
+	for k, vs := range hdr {
+		for _, v := range vs {
+			req.Header.Add(k, v)
+		}
+	}
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
@@ -128,6 +140,7 @@ type apiError struct {
 // mapResponse turns a non-2xx Google answer into an error wrapping a provider
 // sentinel:
 //
+//	412                                        -> ErrPreconditionFailed
 //	401, or 403 insufficientPermissions        -> ErrAuth
 //	403/429 rate and quota reasons, 429        -> RateLimitError
 //	404, 410                                   -> ErrNotFound
@@ -146,20 +159,35 @@ func mapResponse(resp *http.Response) error {
 		msg = msg[:300] + "..."
 	}
 	detail := fmt.Sprintf("google calendar %d %s: %s", resp.StatusCode, reason, msg)
+	wrap := func(err error) error { return &statusError{Status: resp.StatusCode, Reason: reason, Err: err} }
 	switch {
 	case resp.StatusCode == http.StatusTooManyRequests, isRateReason(reason):
 		return &mail.RateLimitError{RetryAfter: parseRetryAfter(resp.Header.Get("Retry-After")), Err: errors.New(detail)}
+	case resp.StatusCode == http.StatusPreconditionFailed:
+		return wrap(fmt.Errorf("%w: %s", provider.ErrPreconditionFailed, detail))
 	case resp.StatusCode == http.StatusUnauthorized, reason == "insufficientPermissions", reason == "authError":
-		return fmt.Errorf("%w: %s", provider.ErrAuth, detail)
+		return wrap(fmt.Errorf("%w: %s", provider.ErrAuth, detail))
 	case resp.StatusCode == http.StatusNotFound, resp.StatusCode == http.StatusGone:
-		return fmt.Errorf("%w: %s", provider.ErrNotFound, detail)
+		return wrap(fmt.Errorf("%w: %s", provider.ErrNotFound, detail))
 	case resp.StatusCode == http.StatusBadRequest:
-		return fmt.Errorf("%w: %s", provider.ErrInvalidQuery, detail)
+		return wrap(fmt.Errorf("%w: %s", provider.ErrInvalidQuery, detail))
 	case resp.StatusCode >= 400 && resp.StatusCode < 500:
-		return fmt.Errorf("%w: %s", provider.ErrRejected, detail)
+		return wrap(fmt.Errorf("%w: %s", provider.ErrRejected, detail))
 	}
-	return fmt.Errorf("google calendar: %s", detail)
+	return wrap(fmt.Errorf("google calendar: %s", detail))
 }
+
+// statusError keeps the HTTP status and Google's first error reason next to the
+// sentinel-wrapping error, so a create can tell a duplicate id (409) from any
+// other refusal without parsing text.
+type statusError struct {
+	Status int
+	Reason string
+	Err    error
+}
+
+func (e *statusError) Error() string { return e.Err.Error() }
+func (e *statusError) Unwrap() error { return e.Err }
 
 func isRateReason(r string) bool {
 	switch r {
@@ -667,24 +695,4 @@ func (c *Client) FreeBusy(ctx context.Context, q provider.FreeBusyQuery) (provid
 		out.Busy[it.ID] = provider.MergeIntervals(ivs)
 	}
 	return out, nil
-}
-
-// ---- writes (a later phase) ----
-
-var errWritesLater = errors.New("google calendar: writes are not implemented yet")
-
-func (c *Client) CreateEvent(context.Context, string, provider.EventInput, provider.CreateOptions) (provider.Event, error) {
-	return provider.Event{}, errWritesLater
-}
-
-func (c *Client) UpdateEvent(context.Context, provider.EventRef, provider.Scope, provider.EventPatch, string) (provider.Event, error) {
-	return provider.Event{}, errWritesLater
-}
-
-func (c *Client) DeleteEvent(context.Context, provider.EventRef, provider.Scope, string) error {
-	return errWritesLater
-}
-
-func (c *Client) Respond(context.Context, provider.EventRef, provider.Response, string) error {
-	return errWritesLater
 }
