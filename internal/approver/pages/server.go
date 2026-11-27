@@ -6,7 +6,7 @@
 // recipients with soft flags, the plain-text body and the RFC822 sha256,
 // rendered from the sealed preview; the account address in the FROM banner
 // comes from the signed payload. Sending kinds put the banner first and make
-// the owner tap "Send from <nickname> (<address>)" before the passkey prompt:
+// the owner tap the confirm button naming the account before the passkey prompt:
 // the tap is a conditional write on the request row, and an assertion for such
 // a request is refused until it is recorded.
 package pages
@@ -231,7 +231,7 @@ func (s *Server) page(w http.ResponseWriter, r *http.Request) {
 	v.NeedsFrom = api.FromKinds(req.Kind)
 	v.Confirmed = req.FromConfirmedAt != nil
 	if v.NeedsFrom {
-		b := newBanner(pv, req.FromAddress, s.now())
+		b := newBanner(pv, req.FromAddress, req.Kind, s.now())
 		v.Banner = &b
 	}
 	switch req.Kind {

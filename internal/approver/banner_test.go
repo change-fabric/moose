@@ -21,7 +21,7 @@ func TestBannerShowsTheAccountInItsPaletteColour(t *testing.T) {
 		`class="banner pc0"`, // first account, first palette colour
 		`class="strip pat-none"`,
 		`>Work</p>`, // nickname, large
-		`<span class="local">alice</span><span class="at">@</span><span class="domain">example.com</span>`, // local part and domain separated
+		`<span class="local">alice</span><wbr><span class="at">@</span><span class="domain">example.com</span>`, // local part and domain separated
 		`class="dn">Alice Doe`,                               // display name
 		`class="monogram" aria-hidden="true">W`,              // monogram
 		`Sending from &middot; ` + palette.At(0).Name,        // colour named in text, not by colour alone
@@ -42,6 +42,32 @@ func TestBannerShowsTheAccountInItsPaletteColour(t *testing.T) {
 	}
 	if strings.Count(body, "<h1>") != 1 {
 		t.Errorf("%d h1 elements", strings.Count(body, "<h1>"))
+	}
+}
+
+func TestEnableBannerNamesTheActionAndShowsTheAddressOnce(t *testing.T) {
+	h := newHarness(t)
+	bare := acct{"acc_bare", "f3muletown@gmail.com", "f3muletown@gmail.com", "", 1}
+	body := h.get("/approve/r/" + h.create(enableBody(bare, "en-bare")).RequestID).Body
+	if !strings.Contains(body, `>Enable sending from f3muletown@gmail.com</button>`) {
+		t.Error("the enable button does not name the action and the address once")
+	}
+	if strings.Contains(body, `class="nick"`) {
+		t.Error("the nickname fallback repeats the address in the banner")
+	}
+	if !strings.Contains(body, `class="addr lead"`) {
+		t.Error("the address is not the lead line when there is no nickname")
+	}
+	if !strings.Contains(body, `role="region" aria-label="Sending account: f3muletown@gmail.com`) {
+		t.Error("the banner region lost its label")
+	}
+
+	named := h.get("/approve/r/" + h.create(enableBody(work, "en-work")).RequestID).Body
+	if !strings.Contains(named, `>Enable sending from Work (alice@example.com)</button>`) {
+		t.Error("the enable button does not name the nickname and address")
+	}
+	if !strings.Contains(named, `<p class="nick">Work</p>`) {
+		t.Error("a real nickname is not shown")
 	}
 }
 
