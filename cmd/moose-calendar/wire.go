@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -11,7 +12,14 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
+	"github.com/aws/aws-sdk-go-v2/service/kms"
+	"github.com/aws/aws-sdk-go-v2/service/secretsmanager"
+	"golang.org/x/oauth2"
 
+	"github.com/change-fabric/moose/internal/accounts/accountprov"
+	"github.com/change-fabric/moose/internal/accounts/connect"
+	"github.com/change-fabric/moose/internal/accounts/envelope"
+	"github.com/change-fabric/moose/internal/accounts/oauthwire"
 	"github.com/change-fabric/moose/internal/accounts/store"
 	emaildynamo "github.com/change-fabric/moose/internal/accounts/store/dynamo"
 	emailsqlite "github.com/change-fabric/moose/internal/accounts/store/sqlite"
@@ -27,6 +35,13 @@ type wiring struct {
 	// tools is store with accounts of a switched-off provider reading as
 	// provider_disabled, so the tools hide them while their credentials are kept.
 	tools store.Store
+	// providers builds the calendar provider for a stored account, with the
+	// per-account access-token cache. It is nil when this server has no way to
+	// open stored credentials (no KMS key and no dev key): the tools then say
+	// calendar access is not configured.
+	providers *accountprov.Source
+	// cursorKey signs list_events cursors; every Lambda instance derives the same one.
+	cursorKey []byte
 	// protect wraps the MCP endpoint in bearer-token verification for the
 	// calendar resource. It is nil only in dev without a public origin.
 	protect func(http.Handler) http.Handler
@@ -46,6 +61,10 @@ func buildWiring(ctx context.Context, cfg config.Config, log *slog.Logger, loadA
 		return nil, err
 	}
 	w := &wiring{store: st, tools: store.GateProviders(st, enabledProviders(*e))}
+	if err := w.buildProviders(ctx, *e, log, loadAWS); err != nil {
+		_ = st.Close()
+		return nil, err
+	}
 	if e.BaseURL == "" {
 		log.Warn("moose-calendar: no email.base_url, serving /calendar/mcp without OAuth as the dev identity " + cfg.DevIdentity)
 		return w, nil
@@ -53,6 +72,84 @@ func buildWiring(ctx context.Context, cfg config.Config, log *slog.Logger, loadA
 	v := oauthas.NewVerifier(st, e.BaseURL, oauthas.CalendarResource, nil)
 	w.protect = v.Protect
 	return w, nil
+}
+
+// buildProviders sets up the calendar provider source: the sealer that opens
+// stored refresh tokens (KMS, or the dev key) and one OAuth client per enabled
+// provider, which only token refresh uses. The calendar server never runs the
+// connect flow, so no redirect is involved. With no sealer the source stays nil.
+func (w *wiring) buildProviders(ctx context.Context, e config.Email, log *slog.Logger, loadAWS func(context.Context) (aws.Config, error)) error {
+	var awsCfg *aws.Config
+	needAWS := func() (aws.Config, error) {
+		if awsCfg == nil {
+			c, err := loadAWS(ctx)
+			if err != nil {
+				return aws.Config{}, fmt.Errorf("aws config: %w", err)
+			}
+			awsCfg = &c
+		}
+		return *awsCfg, nil
+	}
+	var seal envelope.Sealer
+	switch {
+	case e.KMSKeyID != "":
+		ac, err := needAWS()
+		if err != nil {
+			return err
+		}
+		seal = envelope.NewKMS(kms.NewFromConfig(ac), e.KMSKeyID)
+	case e.DevKey != "":
+		key, err := base64.StdEncoding.DecodeString(e.DevKey)
+		if err != nil {
+			return fmt.Errorf("MOOSE_EMAIL_DEV_KEY: %w", err)
+		}
+		if seal, err = envelope.NewLocal(key); err != nil {
+			return err
+		}
+	default:
+		log.Warn("moose-calendar: no email.kms_key_id or dev key, so stored credentials cannot be opened; the calendar read tools will report that calendar access is not configured")
+		w.cursorKey = oauthwire.DeriveKey(nil, "")
+		return nil
+	}
+
+	var secret oauthwire.SecretFunc
+	if e.GoogleSecretARN != "" || (e.MicrosoftEnabled() && e.Microsoft.ClientSecretRef != "") {
+		ac, err := needAWS()
+		if err != nil {
+			return err
+		}
+		secret = oauthwire.SecretsManager(secretsmanager.NewFromConfig(ac))
+	}
+	configs := map[string]*oauth2.Config{}
+	var google *oauth2.Config
+	var cursorBase []byte
+	if e.DevKey != "" {
+		cursorBase = []byte(e.DevKey)
+	}
+	if e.HasProvider(config.MailProviderGoogle) {
+		id, sec, err := oauthwire.GoogleCredentials(ctx, e, secret)
+		if err != nil {
+			return err
+		}
+		google = connect.GoogleConfig(id, sec, e.BaseURL)
+		configs[store.ProviderGoogle] = google
+		if cursorBase == nil {
+			cursorBase = []byte(sec)
+		}
+	}
+	if e.MicrosoftEnabled() {
+		id, sec, err := oauthwire.MicrosoftCredentials(ctx, e, secret)
+		if err != nil {
+			return err
+		}
+		configs[store.ProviderMicrosoft] = connect.MicrosoftConfig(id, sec, e.BaseURL)
+		if cursorBase == nil {
+			cursorBase = []byte(sec)
+		}
+	}
+	w.providers = &accountprov.Source{Store: w.store, Seal: seal, OAuth: google, Configs: configs, Log: log}
+	w.cursorKey = oauthwire.DeriveKey(cursorBase, "moose-calendar/list-cursor/v1")
+	return nil
 }
 
 // enabledProviders reports which providers are on, as moose-email decides it:

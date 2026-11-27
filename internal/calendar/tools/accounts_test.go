@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -194,7 +195,7 @@ func TestListAccountsWithoutAnOwnerIsUnauthorized(t *testing.T) {
 	}
 }
 
-func TestServerCarriesInstructionsAndTheToolIsReadOnly(t *testing.T) {
+func TestServerCarriesInstructionsAndEveryToolIsReadOnly(t *testing.T) {
 	cs := connect(t, tools.Deps{Store: seed(t), FallbackOwner: "pat"})
 	if init := cs.InitializeResult(); init == nil || !strings.Contains(init.Instructions, "address") || !strings.Contains(init.Instructions, "not_granted") {
 		t.Errorf("instructions = %+v", init)
@@ -203,10 +204,19 @@ func TestServerCarriesInstructionsAndTheToolIsReadOnly(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(list.Tools) != 1 || list.Tools[0].Name != "calendar_list_accounts" {
-		t.Fatalf("tools = %+v, want only calendar_list_accounts in the scaffold", list.Tools)
+	want := []string{
+		"calendar_find_meeting_times", "calendar_free_busy", "calendar_get_event",
+		"calendar_list_accounts", "calendar_list_calendars", "calendar_list_events",
 	}
-	if a := list.Tools[0].Annotations; a == nil || !a.ReadOnlyHint {
-		t.Errorf("annotations = %+v, want read-only", a)
+	var got []string
+	for _, tl := range list.Tools {
+		got = append(got, tl.Name)
+		if a := tl.Annotations; a == nil || !a.ReadOnlyHint {
+			t.Errorf("%s annotations = %+v, want read-only", tl.Name, a)
+		}
+	}
+	sort.Strings(got)
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("tools = %v, want exactly the read tools %v (no write tool yet)", got, want)
 	}
 }

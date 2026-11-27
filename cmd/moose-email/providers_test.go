@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/change-fabric/moose/internal/accounts/connect"
+	"github.com/change-fabric/moose/internal/accounts/oauthwire"
 	"github.com/change-fabric/moose/internal/accounts/store"
 	"github.com/change-fabric/moose/internal/config"
 )
@@ -145,11 +146,11 @@ func TestSwitchedOffProviderAccountsAreHiddenFromTheTools(t *testing.T) {
 func TestMicrosoftCredentialsFromTheSecretOrTheEnvironment(t *testing.T) {
 	ctx := context.Background()
 	e := config.Email{Microsoft: config.EmailMicrosoft{ClientID: "id", ClientSecret: "dev-secret"}}
-	if id, sec, err := microsoftCredentials(ctx, e, nil); err != nil || id != "id" || sec != "dev-secret" {
+	if id, sec, err := oauthwire.MicrosoftCredentials(ctx, e, nil); err != nil || id != "id" || sec != "dev-secret" {
 		t.Fatalf("dev = %q %q %v", id, sec, err)
 	}
 	e = config.Email{Microsoft: config.EmailMicrosoft{ClientID: "id", ClientSecretRef: "arn:m"}}
-	reader := func(body string) secretFunc {
+	reader := func(body string) oauthwire.SecretFunc {
 		return func(_ context.Context, arn string) ([]byte, error) {
 			if arn != "arn:m" {
 				return nil, errors.New("wrong arn")
@@ -161,16 +162,16 @@ func TestMicrosoftCredentialsFromTheSecretOrTheEnvironment(t *testing.T) {
 		"json": {`{"client_secret":"from-json"}`, "from-json"},
 		"bare": {" from-bare\n", "from-bare"},
 	} {
-		if id, sec, err := microsoftCredentials(ctx, e, reader(tc.body)); err != nil || id != "id" || sec != tc.want {
+		if id, sec, err := oauthwire.MicrosoftCredentials(ctx, e, reader(tc.body)); err != nil || id != "id" || sec != tc.want {
 			t.Errorf("%s = %q %q %v", name, id, sec, err)
 		}
 	}
 	for name, body := range map[string]string{"empty": "", "json without secret": `{"client_id":"x"}`, "broken json": `{`} {
-		if _, _, err := microsoftCredentials(ctx, e, reader(body)); err == nil {
+		if _, _, err := oauthwire.MicrosoftCredentials(ctx, e, reader(body)); err == nil {
 			t.Errorf("%s: want an error", name)
 		}
 	}
-	if _, _, err := microsoftCredentials(ctx, e, nil); err == nil {
+	if _, _, err := oauthwire.MicrosoftCredentials(ctx, e, nil); err == nil {
 		t.Error("no secret reader: want an error")
 	}
 }

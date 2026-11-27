@@ -175,8 +175,13 @@ func TestCalendarEndpointAcceptsOnlyCalendarTokens(t *testing.T) {
 	}
 	defer cs.Close()
 	list, err := cs.ListTools(ctx, nil)
-	if err != nil || len(list.Tools) != 1 || list.Tools[0].Name != tools.ToolListAccounts {
+	if err != nil || len(list.Tools) != 6 {
 		t.Fatalf("tools = %+v, %v", list, err)
+	}
+	for _, tl := range list.Tools {
+		if !strings.HasPrefix(tl.Name, "calendar_") {
+			t.Errorf("tool %q is not a calendar tool", tl.Name)
+		}
 	}
 	res, err := cs.CallTool(ctx, &sdk.CallToolParams{Name: tools.ToolListAccounts})
 	if err != nil || res.IsError {

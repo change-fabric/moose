@@ -2,11 +2,7 @@ package main
 
 import (
 	"context"
-	"crypto/hmac"
-	"crypto/rand"
-	"crypto/sha256"
 	"encoding/base64"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -14,7 +10,6 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
@@ -27,6 +22,7 @@ import (
 	"github.com/change-fabric/moose/internal/accounts/accountprov"
 	"github.com/change-fabric/moose/internal/accounts/connect"
 	"github.com/change-fabric/moose/internal/accounts/envelope"
+	"github.com/change-fabric/moose/internal/accounts/oauthwire"
 	"github.com/change-fabric/moose/internal/accounts/store"
 	emaildynamo "github.com/change-fabric/moose/internal/accounts/store/dynamo"
 	emailsqlite "github.com/change-fabric/moose/internal/accounts/store/sqlite"
@@ -42,9 +38,6 @@ type mount struct {
 	pattern string
 	handler http.Handler
 }
-
-// secretFunc reads a Secrets Manager secret.
-type secretFunc func(ctx context.Context, arn string) ([]byte, error)
 
 // wiring is everything the connect page and the OAuth server need, built from
 // config.
@@ -118,13 +111,13 @@ func buildConnect(ctx context.Context, cfg config.Config, log *slog.Logger, load
 		}
 	}
 
-	var secret secretFunc
+	var secret oauthwire.SecretFunc
 	if e.GoogleSecretARN != "" || (e.MicrosoftEnabled() && e.Microsoft.ClientSecretRef != "") {
 		ac, err := needAWS()
 		if err != nil {
 			return fail(err)
 		}
-		secret = secretsManager(secretsmanager.NewFromConfig(ac))
+		secret = oauthwire.SecretsManager(secretsmanager.NewFromConfig(ac))
 	}
 
 	var auth connect.Authenticator = connect.SessionAuth{Store: st}
@@ -190,7 +183,7 @@ func buildConnect(ctx context.Context, cfg config.Config, log *slog.Logger, load
 		}
 		w.attach = &attach.Service{Store: attach.NewS3(s3.NewFromConfig(ac), e.AttachBucket, e.KMSKeyID)}
 	}
-	w.cursorKey = deriveKey(cursorBase, "moose-email/search-cursor/v1")
+	w.cursorKey = oauthwire.DeriveKey(cursorBase, "moose-email/search-cursor/v1")
 	return w, nil
 }
 
@@ -212,10 +205,10 @@ func enabledProviders(e config.Email) func(provider string) bool {
 // email.providers and returns the OAuth client of each for token refresh. The
 // Google client is returned on its own too: it is the connect page's built-in
 // provider, nil when Google is not offered.
-func buildAdapters(ctx context.Context, e config.Email, secret secretFunc) (adapters []connect.Adapter, configs map[string]*oauth2.Config, google *oauth2.Config, err error) {
+func buildAdapters(ctx context.Context, e config.Email, secret oauthwire.SecretFunc) (adapters []connect.Adapter, configs map[string]*oauth2.Config, google *oauth2.Config, err error) {
 	configs = map[string]*oauth2.Config{}
 	if e.HasProvider(config.MailProviderGoogle) {
-		id, sec, err := googleCredentials(ctx, e, secret)
+		id, sec, err := oauthwire.GoogleCredentials(ctx, e, secret)
 		if err != nil {
 			return nil, nil, nil, err
 		}
@@ -223,7 +216,7 @@ func buildAdapters(ctx context.Context, e config.Email, secret secretFunc) (adap
 		configs[store.ProviderGoogle] = google
 	}
 	if e.MicrosoftEnabled() {
-		id, sec, err := microsoftCredentials(ctx, e, secret)
+		id, sec, err := oauthwire.MicrosoftCredentials(ctx, e, secret)
 		if err != nil {
 			return nil, nil, nil, err
 		}
@@ -236,7 +229,7 @@ func buildAdapters(ctx context.Context, e config.Email, secret secretFunc) (adap
 
 // approverKey returns the HMAC key shared with the approver's service API, from
 // the config value or the Secrets Manager secret it names.
-func approverKey(ctx context.Context, e config.Email, secret secretFunc, needAWS func() (aws.Config, error)) ([]byte, error) {
+func approverKey(ctx context.Context, e config.Email, secret oauthwire.SecretFunc, needAWS func() (aws.Config, error)) ([]byte, error) {
 	key := []byte(e.ApproverSecret)
 	if e.ApproverSecretARN != "" {
 		if secret == nil {
@@ -244,7 +237,7 @@ func approverKey(ctx context.Context, e config.Email, secret secretFunc, needAWS
 			if err != nil {
 				return nil, err
 			}
-			secret = secretsManager(secretsmanager.NewFromConfig(ac))
+			secret = oauthwire.SecretsManager(secretsmanager.NewFromConfig(ac))
 		}
 		var err error
 		if key, err = secret(ctx, e.ApproverSecretARN); err != nil {
@@ -255,19 +248,6 @@ func approverKey(ctx context.Context, e config.Email, secret secretFunc, needAWS
 		return nil, errors.New("the approver service secret must be at least 32 bytes")
 	}
 	return key, nil
-}
-
-// deriveKey makes a purpose-bound key from base so one secret never signs two
-// kinds of thing. An empty base gives a random key, which suits one process only.
-func deriveKey(base []byte, purpose string) []byte {
-	if len(base) == 0 {
-		k := make([]byte, 32)
-		_, _ = rand.Read(k)
-		return k
-	}
-	m := hmac.New(sha256.New, base)
-	m.Write([]byte(purpose))
-	return m.Sum(nil)
 }
 
 // buildOAuth builds the authorization server: an HMAC client for the approver's
@@ -320,80 +300,6 @@ func openStore(ctx context.Context, cfg config.Config, needAWS func() (aws.Confi
 		return emaildynamo.NewStore(dynamodb.NewFromConfig(ac), cfg.Store.DynamoTable), nil
 	}
 	return nil, fmt.Errorf("store: unknown kind %q", cfg.Store.Kind)
-}
-
-func secretsManager(c *secretsmanager.Client) secretFunc {
-	return func(ctx context.Context, arn string) ([]byte, error) {
-		out, err := c.GetSecretValue(ctx, &secretsmanager.GetSecretValueInput{SecretId: aws.String(arn)})
-		if err != nil {
-			return nil, err
-		}
-		if out.SecretString != nil {
-			return []byte(*out.SecretString), nil
-		}
-		if out.SecretBinary != nil {
-			return out.SecretBinary, nil
-		}
-		return nil, errors.New("secret has no value")
-	}
-}
-
-// googleCredentials returns the tenant's Google OAuth client id and secret from
-// the Secrets Manager secret (JSON {"client_id", "client_secret"}) or, in dev,
-// from the environment.
-func googleCredentials(ctx context.Context, e config.Email, secret secretFunc) (id, sec string, err error) {
-	if e.GoogleSecretARN == "" {
-		return e.GoogleClientID, e.GoogleClientSecret, nil
-	}
-	if secret == nil {
-		return "", "", errors.New("google oauth secret: no secret reader")
-	}
-	raw, err := secret(ctx, e.GoogleSecretARN)
-	if err != nil {
-		return "", "", fmt.Errorf("google oauth secret: %w", err)
-	}
-	var v struct {
-		ClientID     string `json:"client_id"`
-		ClientSecret string `json:"client_secret"`
-	}
-	if err := json.Unmarshal(raw, &v); err != nil {
-		return "", "", errors.New("google oauth secret is not JSON with client_id and client_secret")
-	}
-	if v.ClientID == "" || v.ClientSecret == "" {
-		return "", "", errors.New("google oauth secret lacks client_id or client_secret")
-	}
-	return v.ClientID, v.ClientSecret, nil
-}
-
-// microsoftCredentials returns the Entra app's client id (email.microsoft.client_id)
-// and secret, from the Secrets Manager secret client_secret_ref names (JSON
-// {"client_secret": ...}, or the bare secret) or, in dev, from the environment.
-func microsoftCredentials(ctx context.Context, e config.Email, secret secretFunc) (id, sec string, err error) {
-	m := e.Microsoft
-	if m.ClientSecretRef == "" {
-		return m.ClientID, m.ClientSecret, nil
-	}
-	if secret == nil {
-		return "", "", errors.New("microsoft oauth secret: no secret reader")
-	}
-	raw, err := secret(ctx, m.ClientSecretRef)
-	if err != nil {
-		return "", "", fmt.Errorf("microsoft oauth secret: %w", err)
-	}
-	sec = strings.TrimSpace(string(raw))
-	if strings.HasPrefix(sec, "{") {
-		var v struct {
-			ClientSecret string `json:"client_secret"`
-		}
-		if err := json.Unmarshal(raw, &v); err != nil {
-			return "", "", errors.New("microsoft oauth secret is not JSON with client_secret")
-		}
-		sec = v.ClientSecret
-	}
-	if sec == "" {
-		return "", "", errors.New("microsoft oauth secret has no client_secret")
-	}
-	return m.ClientID, sec, nil
 }
 
 func defaultAWS(ctx context.Context) (aws.Config, error) { return awsconfig.LoadDefaultConfig(ctx) }
