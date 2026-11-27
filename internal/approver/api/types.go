@@ -287,6 +287,10 @@ type Preview struct {
 	Siblings []Sibling `json:"siblings,omitempty"`
 	LastSent *LastSent `json:"last_sent,omitempty"`
 	Message  *Message  `json:"message,omitempty"`
+	// SemanticMatch is true when the provider re-serialises the message on send
+	// (Microsoft Graph), so the guarantee is that the sent content matches the
+	// fields shown, not that the bytes are identical. The approver says so.
+	SemanticMatch bool `json:"semantic_match,omitempty"`
 }
 
 // Sibling is another connected account, as much as the look-alike check needs.

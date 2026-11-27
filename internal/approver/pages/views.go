@@ -199,10 +199,13 @@ type queueRow struct{ Label, Detail, URL, Age string }
 
 type sendView struct {
 	From, Subject, Body, SHA string
-	To, Cc, Bcc              []string
-	Flags                    []string
-	Trust                    []api.TrustChange
-	RequestID                string
+	// Semantic is true for providers that re-serialise a message on send:
+	// the approval is for these fields, not for exact bytes.
+	Semantic    bool
+	To, Cc, Bcc []string
+	Flags       []string
+	Trust       []api.TrustChange
+	RequestID   string
 }
 
 type batchItemView struct {
@@ -243,7 +246,8 @@ var pageTmpl = template.Must(template.New("page").Funcs(funcs).Parse(`{{define "
   <dt>Subject</dt><dd>{{.Subject}}</dd>
   {{if .Flags}}<dt>Flags</dt><dd>{{range .Flags}}<span class="chip">{{.}}</span>{{end}}</dd>{{end}}
   {{if .Trust}}<dt>Will be trusted</dt><dd>{{range .Trust}}<span class="chip">{{.Address}}</span>{{end}}</dd>{{end}}
-  <dt>RFC822 sha256</dt><dd class="sha">{{.SHA}}</dd>
+  {{if .Semantic}}<dt>Guarantee</dt><dd class="guarantee">Sent content will match these fields. This mailbox re-formats the message when it sends it, so the exact bytes can differ; the sender, recipients, subject and text are checked against this approval after sending.</dd>{{end}}
+  <dt>{{if .Semantic}}Approved snapshot sha256{{else}}RFC822 sha256{{end}}</dt><dd class="sha">{{.SHA}}</dd>
 </dl>
 <pre class="body" tabindex="0" aria-label="Message body, plain text">{{.Body}}</pre>
 {{end}}

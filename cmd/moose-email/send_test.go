@@ -87,3 +87,45 @@ func TestKillSwitchCommand(t *testing.T) {
 		t.Error("no subcommand must print the usage")
 	}
 }
+
+func TestKillSwitchCanBeScopedToOneProvider(t *testing.T) {
+	cfg := devConfig(t)
+	w, err := buildConnect(context.Background(), cfg, quiet, noAWS)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer w.store.Close()
+	ctx := context.Background()
+	at := time.Date(2026, 11, 25, 1, 2, 3, 0, time.UTC)
+	run := func(args ...string) string {
+		t.Helper()
+		var out bytes.Buffer
+		if err := killSwitch(ctx, w.store, args, &out, at); err != nil {
+			t.Fatalf("%v: %v", args, err)
+		}
+		return out.String()
+	}
+	if got := run("on", "provider=microsoft", "sent", "mismatch"); !strings.Contains(got, "microsoft") || !strings.Contains(got, "ON") {
+		t.Errorf("on = %q", got)
+	}
+	if ks, _ := w.store.ProviderKillSwitch(ctx, "microsoft"); !ks.On || ks.Reason != "sent mismatch" {
+		t.Fatalf("microsoft switch = %+v", ks)
+	}
+	if ks, _ := w.store.KillSwitch(ctx); ks.On {
+		t.Fatal("a provider switch must not set the global one")
+	}
+	if got := run("status", "provider=microsoft"); !strings.Contains(got, "ON") || !strings.Contains(got, "sent mismatch") {
+		t.Errorf("status = %q", got)
+	}
+	if got := run("status"); !strings.Contains(got, "off") {
+		t.Errorf("global status = %q", got)
+	}
+	run("off", "provider=microsoft")
+	if ks, _ := w.store.ProviderKillSwitch(ctx, "microsoft"); ks.On {
+		t.Fatal("off did not turn the provider switch off")
+	}
+	var out bytes.Buffer
+	if err := killSwitch(ctx, w.store, []string{"on", "provider=yahoo"}, &out, at); err == nil {
+		t.Error("an unknown provider must be refused")
+	}
+}

@@ -156,9 +156,10 @@ func (d Deps) registerSendStatus(s *sdk.Server) {
 	mcpkit.AddTool(s, &sdk.Tool{
 		Name: ToolSendStatus,
 		Description: "Check a send request and, once the owner has approved it, carry it out. Call it again until it reaches a final state: " +
-			"sent, failed, unknown (it is not known whether the message left; check the Sent folder, it is never retried), would_send (approved, but live sending is switched off), " +
+			"sent, failed, unknown (it is not known whether the message left; check the Sent folder, it is never retried; on Microsoft moose keeps looking for the sent copy), sent_mismatch, would_send (approved, but live sending is switched off), " +
 			"denied or expired. pending means the approval is still waiting; blocked, rate_limited and already_claimed explain why nothing was sent yet. " +
-			"The message sent is the exact snapshot the owner approved, never the draft as it is now, and it is sent at most once. " +
+			"The message sent is the snapshot the owner approved, never the draft as it is now, and it is sent at most once; on Gmail the bytes are identical, on Microsoft the sender, recipients, subject and text are checked against the approval after sending. " +
+			"submitted (Microsoft) means the provider accepted the send but the sent copy is not confirmed yet: call again. sent_mismatch means the sent copy differs from the approval; it is never retried and sending for that provider is switched off. " +
 			"After a send the source draft is deleted, unless it was edited after approval; then it is kept and source_draft_retained names it. Pass a batch's request_id to carry out every message in it. " + WriteGuidance,
 		InputSchema: &jsonschema.Schema{
 			Type:     "object",

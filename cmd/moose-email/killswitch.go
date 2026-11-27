@@ -21,7 +21,7 @@ import (
 // effect at once without a redeploy.
 func runKillSwitch(ctx context.Context, args []string, out io.Writer, loadAWS func(context.Context) (aws.Config, error)) error {
 	if len(args) == 0 {
-		return errors.New("usage: moose-email kill-switch on [reason] | off | status")
+		return errors.New("usage: moose-email kill-switch on [provider=<name>] [reason] | off [provider=<name>] | status [provider=<name>]")
 	}
 	cfg, err := config.Load(os.Getenv)
 	if err != nil {
@@ -46,30 +46,67 @@ func runKillSwitch(ctx context.Context, args []string, out io.Writer, loadAWS fu
 }
 
 func killSwitch(ctx context.Context, st store.Store, args []string, out io.Writer, now time.Time) error {
-	switch args[0] {
+	if len(args) == 0 {
+		return errors.New("usage: moose-email kill-switch on [provider=<name>] [reason] | off [provider=<name>] | status [provider=<name>]")
+	}
+	cmd, rest := args[0], args[1:]
+	// provider=<name> scopes the switch to one provider (the send engine turns
+	// the microsoft one on itself after a sent_mismatch).
+	prov := ""
+	var words []string
+	for _, a := range rest {
+		if v, ok := strings.CutPrefix(a, "provider="); ok {
+			prov = strings.TrimSpace(v)
+			continue
+		}
+		words = append(words, a)
+	}
+	if prov != "" && prov != store.ProviderGoogle && prov != store.ProviderMicrosoft {
+		return fmt.Errorf("unknown provider %q; use %s or %s", prov, store.ProviderGoogle, store.ProviderMicrosoft)
+	}
+	label := "kill switch"
+	set := func(on bool, reason string) error {
+		if prov != "" {
+			return st.SetProviderKillSwitch(ctx, prov, on, reason, now)
+		}
+		return st.SetKillSwitch(ctx, on, reason, now)
+	}
+	if prov != "" {
+		label = prov + " kill switch"
+	}
+	switch cmd {
 	case "on":
-		reason := strings.TrimSpace(strings.Join(args[1:], " "))
-		if err := st.SetKillSwitch(ctx, true, reason, now); err != nil {
+		if err := set(true, strings.TrimSpace(strings.Join(words, " "))); err != nil {
 			return err
 		}
-		fmt.Fprintln(out, "kill switch is ON: no message will be sent")
+		if prov != "" {
+			fmt.Fprintf(out, "%s is ON: no message will be sent from %s accounts\n", label, prov)
+		} else {
+			fmt.Fprintln(out, "kill switch is ON: no message will be sent")
+		}
 	case "off":
-		if err := st.SetKillSwitch(ctx, false, "", now); err != nil {
+		if err := set(false, ""); err != nil {
 			return err
 		}
-		fmt.Fprintln(out, "kill switch is off")
+		fmt.Fprintf(out, "%s is off\n", label)
 	case "status":
-		ks, err := st.KillSwitch(ctx)
+		var ks store.KillState
+		var err error
+		if prov != "" {
+			ks, err = st.ProviderKillSwitch(ctx, prov)
+		} else {
+			ks, err = st.KillSwitch(ctx)
+		}
 		if err != nil {
 			return err
 		}
 		if ks.On {
-			fmt.Fprintf(out, "kill switch is ON since %s %s\n", ks.At.Format(time.RFC3339), ks.Reason)
+			fmt.Fprintf(out, "%s is ON since %s %s\n", label, ks.At.Format(time.RFC3339), ks.Reason)
 		} else {
-			fmt.Fprintln(out, "kill switch is off")
+			fmt.Fprintf(out, "%s is off\n", label)
 		}
 	default:
-		return errors.New("usage: moose-email kill-switch on [reason] | off | status")
+		return errors.New("usage: moose-email kill-switch on [provider=<name>] [reason] | off [provider=<name>] | status [provider=<name>]")
 	}
 	return nil
 }

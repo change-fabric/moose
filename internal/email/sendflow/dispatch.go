@@ -51,6 +51,14 @@ type ItemStatus struct {
 	SourceDraftID       string `json:"source_draft_id,omitempty"`
 	// DryRun is true for would_send: email.send.live is off, so nothing left moose.
 	DryRun bool `json:"dry_run,omitempty"`
+	// SentID is the id of the correlated Sent Items copy on a native draft-send.
+	SentID string `json:"sent_id,omitempty"`
+	// ReconcileAttempts counts looks for the Sent copy of a submitted or
+	// unknown native send.
+	ReconcileAttempts int `json:"reconcile_attempts,omitempty"`
+	// NeedsOperator is true for an unknown send still unresolved 24 hours after
+	// it was issued: the owner must check the Sent folder and mark it.
+	NeedsOperator bool `json:"needs_operator,omitempty"`
 }
 
 // StatusOut is the answer to Status. For a batch, Items holds one entry per
@@ -66,7 +74,7 @@ func (s *Service) out(ap store.Approval, status, note string) StatusOut {
 
 func terminal(state string) bool {
 	switch state {
-	case store.SendSent, store.SendFailed, store.SendUnknown, store.SendWouldSend:
+	case store.SendSent, store.SendFailed, store.SendUnknown, store.SendWouldSend, store.SendSentMismatch:
 		return true
 	}
 	return false
@@ -103,7 +111,7 @@ func (s *Service) account(ctx context.Context, ap store.Approval) (store.Account
 // fromRow renders a ledger row.
 func (s *Service) fromRow(ap store.Approval, a store.Account, row store.SendRow) StatusOut {
 	o := StatusOut{ItemStatus: ItemStatus{RequestID: ap.ID, Status: row.State, State: row.State, AccountID: ap.AccountID, FromAddress: a.Address,
-		ProviderMessageID: row.ProviderMessageID}}
+		ProviderMessageID: row.ProviderMessageID, SentID: row.SentID, ReconcileAttempts: row.ReconcileAttempts}}
 	switch row.State {
 	case store.SendSent:
 		o.Note = "The message was sent."
@@ -114,7 +122,18 @@ func (s *Service) fromRow(ap store.Approval, a store.Account, row store.SendRow)
 		o.Note = "The send was refused before anything was delivered. The hourly cap slot was released."
 	case store.SendUnknown:
 		o.Note = "It is not known whether the message left. Check the Sent folder before sending again; moose will not retry it."
-	case store.SendDispatching:
+		if row.StagingID != "" {
+			o.Note = "It is not known whether the message left. moose will not retry it; it keeps looking for the sent copy by its staging id."
+			if s.needsOperator(row) {
+				o.NeedsOperator = true
+				o.Note = "It is still not known whether the message left, 24 hours after it was issued. Check the Sent folder, then mark it sent or not sent. moose will not retry it."
+			}
+		}
+	case store.SendSubmitted:
+		o.Note = "The provider accepted the message for sending. Sending is asynchronous, so it is not yet confirmed; call again and moose will look for the sent copy."
+	case store.SendSentMismatch:
+		o.Note = "The sent copy does not match the approved message. Mail may have been delivered. It will not be retried; the owner has been alerted and sending for this provider is switched off pending investigation."
+	case store.SendDispatching, store.SendStaging:
 		o.Note = "The send is in progress."
 	}
 	return o
@@ -131,8 +150,12 @@ func (s *Service) statusItem(ctx context.Context, ap store.Approval) (StatusOut,
 	switch {
 	case err == nil:
 		switch {
+		case reconcilable(row):
+			return s.reconcile(ctx, ap, a, row)
 		case terminal(row.State):
 			return s.fromRow(ap, a, row), nil
+		case row.State == store.SendStaging:
+			return s.stagingRow(ctx, ap, a, row)
 		case row.State == store.SendDispatching:
 			return s.dispatching(ctx, ap, a, row)
 		case row.State == store.SendClaimed:
@@ -259,13 +282,16 @@ func (s *Service) afterClaim(ctx context.Context, ap store.Approval, a store.Acc
 		o.State, o.FromAddress = store.SendClaimed, a.Address
 		return o, nil
 	}
-	if _, err := s.Store.AdvanceSend(ctx, ap.ID, store.SendClaimed, store.SendDispatching, "", s.now()); err != nil {
-		return s.lost(ctx, ap, a, err)
-	}
 	p, err := s.Providers.Provider(ctx, a)
 	if err != nil {
 		// Nothing was sent: the provider could not even be opened.
-		return s.failDispatching(ctx, ap, a, "The mailbox could not be opened.")
+		return s.failClaimed(ctx, ap, a, "The mailbox could not be opened.")
+	}
+	if ns, ok := p.(provider.NativeSender); ok && p.Capabilities().NativeDraftSend {
+		return s.dispatchNative(ctx, ap, a, row, p, ns, snapshot)
+	}
+	if _, err := s.Store.AdvanceSend(ctx, ap.ID, store.SendClaimed, store.SendDispatching, "", s.now()); err != nil {
+		return s.lost(ctx, ap, a, err)
 	}
 	sctx, cancel := context.WithTimeout(ctx, s.dispatchTimeout())
 	sent, err := p.SendDraft(sctx, snapshot, ap.ThreadID)
@@ -312,7 +338,10 @@ func (s *Service) afterClaim(ctx context.Context, ap store.Approval, a store.Acc
 
 // discardDraft deletes the source draft after a send, but only when its bytes
 // still hash to the approved snapshot, so later edits are never lost. It
-// reports whether the draft is gone.
+// reports whether the draft is gone. On Graph GetDraftRaw is the canonical
+// rebuild (mailmsg.Build over the draft's JSON, Date pinned to
+// lastModifiedDateTime), so the comparison is of that rebuild with the
+// approved snapshot, never of raw MIME, which Exchange decorates.
 func (s *Service) discardDraft(ctx context.Context, p provider.Provider, ap store.Approval) bool {
 	raw, err := p.GetDraftRaw(ctx, ap.DraftID)
 	if errors.Is(err, provider.ErrNotFound) {

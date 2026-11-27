@@ -1,10 +1,10 @@
-// Package graph implements the read side of provider.Provider on Microsoft
-// Graph (Exchange Online and Outlook.com mail): mailboxes, search, messages,
-// threads by conversationId, and attachment streaming. Drafts and send land in
-// a later phase and answer provider.ErrUnsupported until then.
+// Package graph implements provider.Provider on Microsoft Graph (Exchange
+// Online and Outlook.com mail): mailboxes, search, messages, threads by
+// conversationId, attachment streaming, drafts, and the staged send that
+// provider.NativeSender describes (drafts.go, send.go).
 //
-// Nothing here reaches users yet: no connect flow builds a Client, and the
-// whole Microsoft path stays behind email.microsoft.enabled=false.
+// The whole Microsoft path stays behind email.microsoft.enabled=false, and
+// email.send.live stays false, until the acceptance run is recorded.
 package graph
 
 import (
@@ -59,6 +59,10 @@ const attachmentSelect = "id,name,contentType,size,isInline"
 // Client is one connected Microsoft mailbox.
 type Client struct {
 	g *graphapi.Client
+	// PollInterval is how long SendDraft waits between looks for the Sent copy.
+	// Zero means 750ms. The send engine does not use it: it reconciles from the
+	// ledger across calls.
+	PollInterval time.Duration
 
 	mu     sync.Mutex
 	system map[string]string // folder id -> neutral id, filled on first use
@@ -74,7 +78,7 @@ func New(g *graphapi.Client) *Client { return &Client{g: g} }
 // folders rather than labels, search is $search/$filter, and sending goes
 // through a draft Exchange re-serialises (semantic match plus verify).
 func (c *Client) Capabilities() provider.Capabilities {
-	return provider.Capabilities{Threads: true, Labels: false, SearchDialect: provider.DialectGraph, NativeDraftSend: true, ReadOnly: true}
+	return provider.Capabilities{Threads: true, Labels: false, SearchDialect: provider.DialectGraph, NativeDraftSend: true}
 }
 
 // systemIDs returns the folder id to neutral id map for the five system
@@ -362,26 +366,6 @@ func (c *Client) RawMessage(ctx context.Context, id string) ([]byte, error) {
 	}
 	return raw, nil
 }
-
-func unsupported(op string) error { return fmt.Errorf("graph %s: %w", op, provider.ErrUnsupported) }
-
-func (c *Client) CreateDraft(context.Context, provider.DraftInput) (provider.Draft, error) {
-	return provider.Draft{}, unsupported("create draft")
-}
-
-func (c *Client) UpdateDraft(context.Context, string, provider.DraftInput) (provider.Draft, error) {
-	return provider.Draft{}, unsupported("update draft")
-}
-
-func (c *Client) GetDraftRaw(context.Context, string) ([]byte, error) {
-	return nil, unsupported("get draft")
-}
-
-func (c *Client) SendDraft(context.Context, []byte, string) (provider.SentMessage, error) {
-	return provider.SentMessage{}, unsupported("send")
-}
-
-func (c *Client) DeleteDraft(context.Context, string) error { return unsupported("delete draft") }
 
 // pagingParams extracts the $skip / $skiptoken parameters of an @odata.nextLink.
 // Only those are kept: the host and the rest of the query are never taken from

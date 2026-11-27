@@ -1,7 +1,9 @@
 // Package provider defines the mailbox-provider abstraction moose-email is
 // written against. Tools and the approval flow use only these types, so adding
-// a provider means implementing Provider, not touching the tools. Gmail is the
-// full implementation; Microsoft Graph (internal/email/graph) is read-only so far.
+// a provider means implementing Provider, not touching the tools. Gmail sends
+// the exact approved bytes; Microsoft Graph (internal/email/graph) sends through
+// a staging draft Exchange re-serialises, so it also implements NativeSender and
+// gets the semantic guarantee.
 package provider
 
 import (
@@ -29,6 +31,12 @@ var (
 	// ErrRejected means the provider definitely refused the request (an HTTP 4xx
 	// that is not an auth, not-found or rate-limit answer), so nothing was done.
 	ErrRejected = errors.New("provider: request rejected")
+	// ErrSendRejected means a send call was answered with a response that
+	// proves the provider refused it, so nothing was delivered. It is returned
+	// together with ErrRejected, and only for the enumerated rejection answers
+	// of a provider; transport errors, timeouts, 5xx and every other answer to a
+	// send are not wrapped in it, because the message may have gone out.
+	ErrSendRejected = errors.New("provider: send provably rejected")
 	// ErrUnsupported means the provider does not implement the operation (yet).
 	// Its text carries the stable code CodeUnsupportedForProvider.
 	ErrUnsupported = errors.New("provider: " + CodeUnsupportedForProvider)
@@ -114,7 +122,8 @@ type Capabilities struct {
 	NativeDraftSend bool `json:"native_draft_send"`
 	// ReadOnly reports that the account can only be read: drafts and send are
 	// not implemented, so the write tools answer unsupported_for_provider.
-	// Microsoft Graph reports it until its draft and send path lands.
+	// No provider reports it now that Microsoft Graph has drafts and send; the
+	// field stays for accounts stored while Graph was read-only.
 	ReadOnly bool `json:"read_only,omitempty"`
 }
 
@@ -212,6 +221,64 @@ type Draft struct {
 type SentMessage struct {
 	MessageID string `json:"message_id"`
 	ThreadID  string `json:"thread_id,omitempty"`
+}
+
+// Staged is a staging draft created for a send.
+type Staged struct {
+	// ID is the provider's stable id for the draft (Graph: the ImmutableId). The
+	// same id names the message after it moves to Sent Items, which is how a
+	// send is correlated without looking at subjects or times.
+	ID string `json:"id"`
+	// InternetMessageID is the RFC822 Message-ID the provider gave the draft,
+	// when it has one yet. It is recorded in the ledger and compared to the Sent
+	// copy.
+	InternetMessageID string `json:"internet_message_id,omitempty"`
+}
+
+// SentState is where a staged message stands.
+type SentState int
+
+const (
+	// SentPending means the message is still a draft (or anywhere but Sent
+	// Items): the send is asynchronous, so this is never evidence of failure.
+	SentPending SentState = iota
+	// SentFound means the message is in Sent Items; SentCopy carries it.
+	SentFound
+	// SentMissing means the provider no longer knows the id. It proves nothing:
+	// the message may have been sent and then deleted, or never existed.
+	SentMissing
+)
+
+// SentCopy is the answer to LookupSent.
+type SentCopy struct {
+	State SentState
+	// ID is the id of the Sent Items copy (the staging id on Graph).
+	ID                string
+	InternetMessageID string
+	// Raw is the canonical rebuild of the Sent copy (the same construction as
+	// GetDraftRaw), set when State is SentFound. Callers parse it and compare
+	// fields; they never compare bytes.
+	Raw []byte
+}
+
+// NativeSender is implemented by providers with Capabilities.NativeDraftSend.
+// The send engine drives it in steps so the ledger can record the staging id
+// and the send intent before the send call is issued, and so an outcome it did
+// not see can be resolved later by the staging id alone.
+type NativeSender interface {
+	// StageDraft creates a draft from raw (the approved snapshot).
+	StageDraft(ctx context.Context, raw []byte) (Staged, error)
+	// IssueSend submits the staging draft. nil means the provider accepted it
+	// (Graph: 202), not that it is delivered. A response that proves refusal
+	// wraps ErrSendRejected; anything else, including a lost response, is
+	// returned as is and must be treated as unknown.
+	IssueSend(ctx context.Context, stagingID string) error
+	// LookupSent looks the staged message up by its id.
+	LookupSent(ctx context.Context, stagingID string) (SentCopy, error)
+	// DeleteStaging removes the staging draft, and only while it is still a
+	// draft: a message that has moved to Sent Items is never deleted. A missing
+	// message is ErrNotFound.
+	DeleteStaging(ctx context.Context, stagingID string) error
 }
 
 // Provider is one connected mailbox account.

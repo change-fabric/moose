@@ -414,3 +414,49 @@ func countAttachments(r io.Reader, boundary string, depth int) int {
 		}
 	}
 }
+
+// SemanticDiff compares the fields a re-serialising provider must preserve:
+// From, the To, Cc and Bcc address sets (case-insensitive, order-insensitive),
+// the subject and the decoded text body. It returns a description of every
+// difference, or "" when the messages agree. Display names, other headers, the
+// transfer encoding, line-ending style and trailing whitespace are ignored.
+// The description names fields only and never quotes content.
+func SemanticDiff(want, got Parsed) string {
+	var diffs []string
+	if !strings.EqualFold(strings.TrimSpace(want.From.Address), strings.TrimSpace(got.From.Address)) {
+		diffs = append(diffs, "from differs")
+	}
+	for _, l := range []struct {
+		name string
+		a, b []mail.Address
+	}{{"to", want.To, got.To}, {"cc", want.Cc, got.Cc}, {"bcc", want.Bcc, got.Bcc}} {
+		if strings.Join(addrKeys(l.a), ",") != strings.Join(addrKeys(l.b), ",") {
+			diffs = append(diffs, l.name+" differs")
+		}
+	}
+	if strings.TrimSpace(want.Subject) != strings.TrimSpace(got.Subject) {
+		diffs = append(diffs, "subject differs")
+	}
+	if normalizeBody(want.Body) != normalizeBody(got.Body) {
+		diffs = append(diffs, "body differs")
+	}
+	return strings.Join(diffs, "; ")
+}
+
+func addrKeys(in []mail.Address) []string {
+	out := make([]string, 0, len(in))
+	for _, a := range in {
+		out = append(out, strings.ToLower(strings.TrimSpace(a.Address)))
+	}
+	sort.Strings(out)
+	return out
+}
+
+func normalizeBody(s string) string {
+	s = strings.ReplaceAll(s, "\r\n", "\n")
+	lines := strings.Split(s, "\n")
+	for i := range lines {
+		lines[i] = strings.TrimRight(lines[i], " \t")
+	}
+	return strings.TrimRight(strings.Join(lines, "\n"), "\n")
+}

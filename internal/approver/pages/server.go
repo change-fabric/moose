@@ -177,7 +177,7 @@ func softFlagText(f api.SoftFlag) string {
 }
 
 func sendViewOf(pv api.Preview, p api.EmailSendPayload) *sendView {
-	v := &sendView{SHA: p.RFC822SHA256, Trust: p.TrustChanges}
+	v := &sendView{SHA: p.RFC822SHA256, Trust: p.TrustChanges, Semantic: pv.SemanticMatch}
 	if m := pv.Message; m != nil {
 		v.From, v.Subject, v.Body, v.To, v.Cc, v.Bcc = m.From, m.Subject, m.Body, m.To, m.Cc, m.Bcc
 	}

@@ -292,6 +292,17 @@ const (
 	SendFailed      = "failed"
 	SendUnknown     = "unknown"
 	SendWouldSend   = "would_send"
+	// SendStaging is a native draft-send whose staging draft is being created. It
+	// is the mutex of that step: only the call that moved the row from claimed
+	// creates the draft. Nothing has been issued in this state.
+	SendStaging = "staging"
+	// SendSubmitted is a native draft-send the provider accepted (Graph 202) but
+	// whose Sent copy has not been seen: the send is asynchronous, so it is not a
+	// failure and not yet sent. It resolves by correlating the staging id.
+	SendSubmitted = "submitted"
+	// SendSentMismatch is terminal: the correlated Sent copy differs from the
+	// approved message. Mail may have been delivered; it is never retried.
+	SendSentMismatch = "sent_mismatch"
 )
 
 // SendRow is the durable ledger entry for one send request.
@@ -301,6 +312,22 @@ type SendRow struct {
 	AccountID         string `json:"account_id"`
 	State             string `json:"state"`
 	ProviderMessageID string `json:"provider_message_id,omitempty"`
+	// StagingID is the id of the staging draft a native draft-send (Graph) sends,
+	// and StagingMessageID its RFC822 Message-ID. Both are written before the send
+	// is issued. SentID is the id of the correlated Sent copy once seen.
+	StagingID        string `json:"staging_id,omitempty"`
+	StagingMessageID string `json:"staging_message_id,omitempty"`
+	SentID           string `json:"sent_id,omitempty"`
+	// SendIssuedAt is when the send intent was persisted, immediately before the
+	// send call. A row with it set may have been sent, whatever it says next.
+	SendIssuedAt time.Time `json:"send_issued_at,omitempty"`
+	// ReconcileAttempts counts looks for the Sent copy; LastReconcile is the
+	// latest.
+	ReconcileAttempts int       `json:"reconcile_attempts,omitempty"`
+	LastReconcile     time.Time `json:"last_reconcile,omitempty"`
+	// SweepDone is set once the sweeper has nothing more to do for the row, which
+	// takes it out of the sweep index.
+	SweepDone bool `json:"sweep_done,omitempty"`
 	// Hour is the cap bucket the claim was counted in (HourKey).
 	Hour    string    `json:"hour"`
 	Created time.Time `json:"created"`
@@ -545,6 +572,30 @@ type SendLedger interface {
 	// FailSend moves the row from `from` to `failed` and releases its cap slot
 	// in one transaction.
 	FailSend(ctx context.Context, requestID, from string, now time.Time) error
+	// PatchSend writes the staging, correlation and reconciliation fields of a
+	// native draft-send row and moves it from `from` to `to` (they may be equal),
+	// conditional on the current state (ErrConflict otherwise). Only the fields
+	// set in patch are written. A row that has a StagingID enters the sweep index
+	// until a patch sets SweepDone.
+	PatchSend(ctx context.Context, requestID, from, to string, patch SendPatch, now time.Time) (SendRow, error)
+	// ListSendSweep returns the rows with a staging draft the sweeper has not
+	// finished with: those to reconcile (submitted, unknown) and those whose
+	// staging draft may need cleaning (failed, sent). It reads the secondary
+	// index, which may lag a moment on DynamoDB.
+	ListSendSweep(ctx context.Context) ([]SendRow, error)
+}
+
+// SendPatch is a partial update of a SendRow. Zero fields are left alone.
+type SendPatch struct {
+	StagingID         string
+	StagingMessageID  string
+	SentID            string
+	ProviderMessageID string
+	SendIssuedAt      time.Time
+	// ReconcileAttempts is written when ReconcileAttempts > 0, with LastReconcile.
+	ReconcileAttempts int
+	LastReconcile     time.Time
+	SweepDone         bool
 }
 
 // HourlyCap counts sends per account per UTC hour.
@@ -606,6 +657,12 @@ type Settings interface {
 	SetKillSwitch(ctx context.Context, on bool, reason string, now time.Time) error
 	// KillSwitch reads the switch. An unset switch is off.
 	KillSwitch(ctx context.Context) (KillState, error)
+	// SetProviderKillSwitch is the kill switch scoped to one provider
+	// (ProviderGoogle, ProviderMicrosoft): while it is on no account of that
+	// provider dispatches a send. The global switch still applies on top.
+	SetProviderKillSwitch(ctx context.Context, provider string, on bool, reason string, now time.Time) error
+	// ProviderKillSwitch reads one provider's switch. An unset switch is off.
+	ProviderKillSwitch(ctx context.Context, provider string) (KillState, error)
 }
 
 // Audit holds metadata-only audit rows with a 90-day ttl.
