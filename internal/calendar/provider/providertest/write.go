@@ -115,6 +115,32 @@ func RunWrite(t *testing.T, factory Factory) {
 		}
 	})
 
+	t.Run("FindByDedupeKeyLooksUpWithoutCreating", func(t *testing.T) {
+		p, _ := factory(t)
+		f, ok := p.(provider.DedupeFinder)
+		if !ok {
+			t.Skip("provider has no DedupeFinder")
+		}
+		prim := primaryID(t, p)
+		if _, found, err := f.FindByDedupeKey(t.Context(), prim, "never-made"); err != nil || found {
+			t.Fatalf("lookup of an unused key = found %v, err %v", found, err)
+		}
+		if n := countIn(t, p); n != 0 {
+			t.Fatalf("a lookup created %d events", n)
+		}
+		made, err := p.CreateEvent(t.Context(), prim, newInput(t, "Findable"), provider.CreateOptions{DedupeKey: "req-find"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		got, found, err := f.FindByDedupeKey(t.Context(), prim, "req-find")
+		if err != nil || !found || got.ID != made.ID || got.Title != "Findable" {
+			t.Fatalf("lookup = %+v found %v err %v, want event %s", got, found, err, made.ID)
+		}
+		if _, found, _ := f.FindByDedupeKey(t.Context(), prim, "req-other"); found {
+			t.Fatal("a different key found the event")
+		}
+	})
+
 	t.Run("CreateRefusesBadTimesAndRecurrenceBeforeWriting", func(t *testing.T) {
 		p, s := factory(t)
 		prim := primaryID(t, p)

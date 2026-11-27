@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -23,6 +24,8 @@ import (
 	"github.com/change-fabric/moose/internal/accounts/store"
 	emaildynamo "github.com/change-fabric/moose/internal/accounts/store/dynamo"
 	emailsqlite "github.com/change-fabric/moose/internal/accounts/store/sqlite"
+	"github.com/change-fabric/moose/internal/approver/api"
+	"github.com/change-fabric/moose/internal/calendar/inviteflow"
 	"github.com/change-fabric/moose/internal/config"
 	"github.com/change-fabric/moose/internal/oauthas"
 )
@@ -40,6 +43,9 @@ type wiring struct {
 	// open stored credentials (no KMS key and no dev key): the tools then say
 	// calendar access is not configured.
 	providers *accountprov.Source
+	// invites is the approved-invite engine for events with attendees. It is nil
+	// when the approval service is not configured here.
+	invites *inviteflow.Service
 	// cursorKey signs list_events cursors; every Lambda instance derives the same one.
 	cursorKey []byte
 	// protect wraps the MCP endpoint in bearer-token verification for the
@@ -149,7 +155,52 @@ func (w *wiring) buildProviders(ctx context.Context, e config.Email, log *slog.L
 	}
 	w.providers = &accountprov.Source{Store: w.store, Seal: seal, OAuth: google, Configs: configs, Log: log}
 	w.cursorKey = oauthwire.DeriveKey(cursorBase, "moose-calendar/list-cursor/v1")
+	return w.buildInvites(ctx, e, seal, secret, log, needAWS)
+}
+
+// buildInvites sets up the approved-invite engine: an HMAC client for the
+// approver's service API (URL from email.approver_url, defaulting to the public
+// origin), the pinned receipt key and the relying party id, the same values
+// moose-email's send engine uses. Without them (a dev setup with no approval
+// service) the engine stays nil and events with attendees remain
+// invites_not_enabled. email.calendar.invite.live decides whether an approved
+// change reaches the provider or ends in would_apply.
+func (w *wiring) buildInvites(ctx context.Context, e config.Email, seal envelope.Sealer, secret oauthwire.SecretFunc, log *slog.Logger, needAWS func() (aws.Config, error)) error {
+	if !e.OAuthEnabled() || e.BaseURL == "" || (e.ApproverSecret == "" && e.ApproverSecretARN == "") {
+		log.Warn("moose-calendar: the approval service is not configured (email.owner, rp_id, receipt_public_key, base_url and the approver secret), so events with attendees cannot be approved and stay invites_not_enabled")
+		return nil
+	}
+	key := []byte(e.ApproverSecret)
+	if e.ApproverSecretARN != "" {
+		if secret == nil {
+			ac, err := needAWS()
+			if err != nil {
+				return err
+			}
+			secret = oauthwire.SecretsManager(secretsmanager.NewFromConfig(ac))
+		}
+		var err error
+		if key, err = secret(ctx, e.ApproverSecretARN); err != nil {
+			return fmt.Errorf("approver service secret: %w", err)
+		}
+	}
+	if len(key) < 32 {
+		return errors.New("the approver service secret must be at least 32 bytes")
+	}
+	w.invites = &inviteflow.Service{
+		Store: w.tools, Seal: seal, Approver: &api.Client{BaseURL: serviceBase(e), Secret: key}, Providers: w.providers,
+		ReceiptKey: []byte(e.ReceiptPublicKey), RPID: e.RPID, Live: e.Calendar.Invite.Live, Log: log,
+	}
 	return nil
+}
+
+// serviceBase is where the approval service's API lives: email.approver_url,
+// defaulting to the public origin.
+func serviceBase(e config.Email) string {
+	if e.ApproverURL != "" {
+		return e.ApproverURL
+	}
+	return e.BaseURL
 }
 
 // enabledProviders reports which providers are on, as moose-email decides it:

@@ -511,3 +511,14 @@ type Provider interface {
 	// organizer. comment is plain text of at most MaxResponseComment characters.
 	Respond(ctx context.Context, ref EventRef, resp Response, comment string) error
 }
+
+// DedupeFinder is implemented by providers that can look an event up by the
+// DedupeKey it was created with, without creating anything. The invite flow
+// uses it to settle a create whose outcome was never seen: it finds the event
+// the first call made, or learns there is none, and never writes.
+type DedupeFinder interface {
+	// FindByDedupeKey returns the event created with key on calendarID, with
+	// found true, or found false when no such event exists. A cancelled or
+	// deleted event is not found.
+	FindByDedupeKey(ctx context.Context, calendarID, key string) (ev Event, found bool, err error)
+}

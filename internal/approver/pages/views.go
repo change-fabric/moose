@@ -61,6 +61,13 @@ ul.plain{list-style:none;margin:0;padding:0}
 ul.plain li{padding:.5rem 0;border-top:1px solid var(--line)}
 ul.plain li .note{display:block}
 .batch-item+.batch-item{border-top:1px solid var(--line);margin-top:1rem;padding-top:1rem}
+.untrusted{border:1px dashed var(--fg);border-radius:var(--radius);padding:.5rem .75rem;margin:.25rem 0;overflow-wrap:anywhere;white-space:pre-wrap}
+.untrusted-note{margin:0 0 .5rem}
+.changed-row{border-left:.35rem solid var(--warn-fg);padding-left:.75rem}
+.changed-row dt::after{content:" (changed)";color:var(--warn-fg);font-weight:700}
+.was{margin:.25rem 0 0;color:var(--muted,var(--fg));text-decoration:line-through;overflow-wrap:anywhere;white-space:pre-wrap}
+.recipient{padding:.5rem 0;border-top:1px solid var(--line);overflow-wrap:anywhere}
+.recipient .note{display:block}
 @media (max-width:30rem){.banner-body{flex-direction:column;align-items:flex-start}}
 `
 
@@ -81,6 +88,8 @@ type bannerView struct {
 	ShowNick     bool
 	Warnings     []Warning
 	ConfirmLabel string
+	// Eyebrow is the line above the account: what the account is doing.
+	Eyebrow string
 }
 
 // newBanner builds the FROM banner. The confirm label names the account and
@@ -103,6 +112,7 @@ func newBanner(pv api.Preview, address, kind string, now time.Time) bannerView {
 		Warnings:     LookAlikes(Account{Nickname: nick, Address: address, DisplayName: pv.DisplayName}, pv.Siblings),
 		ShowNick:     !sameAddress(nick, address),
 		ConfirmLabel: confirmLabel(kind, nick, address),
+		Eyebrow:      eyebrow(kind),
 	}
 	if pv.LastSent != nil && !pv.LastSent.At.IsZero() {
 		who := "recipients"
@@ -123,10 +133,25 @@ func confirmLabel(kind, nick, address string) string {
 	if nick != "" && !sameAddress(nick, address) {
 		who = fmt.Sprintf("%s (%s)", nick, address)
 	}
-	if kind == api.KindAccountSendEnable {
+	switch kind {
+	case api.KindAccountSendEnable:
 		return "Enable sending from " + who
+	case api.KindAccountInviteEnable:
+		return "Enable invitations from " + who
+	case api.KindCalendarInvite:
+		return "Send invitations from " + who
 	}
 	return "Send from " + who
+}
+
+// eyebrow is the banner's lead-in: the organizer account for the calendar
+// kinds, the sending account for the rest.
+func eyebrow(kind string) string {
+	switch kind {
+	case api.KindCalendarInvite, api.KindAccountInviteEnable:
+		return "Organizer account"
+	}
+	return "Sending from"
 }
 
 func indexOf(i int) int {
@@ -175,6 +200,7 @@ type pageView struct {
 	Message   string // state message for non-pending requests
 	Body      string // which body template: send, enable, trust, dashboard, batch, state
 	Send      *sendView
+	Invite    *inviteView
 	Trust     []api.TrustChange
 	Dashboard *api.DashboardSessionPayload
 	Items     []batchItemView
@@ -221,7 +247,7 @@ var pageTmpl = template.Must(template.New("page").Funcs(funcs).Parse(`{{define "
   <div class="banner-body">
     <div class="monogram" aria-hidden="true">{{.Monogram}}</div>
     <div>
-      <p class="eyebrow">Sending from &middot; {{.ColorName}}</p>
+      <p class="eyebrow">{{.Eyebrow}} &middot; {{.ColorName}}</p>
       {{if .ShowNick}}<p class="nick">{{.Nickname}}</p>{{end}}
       <p class="addr{{if not .ShowNick}} lead{{end}}"><span class="local">{{.Local}}</span><wbr><span class="at">@</span><span class="domain">{{.Domain}}</span></p>
       {{if .DisplayName}}<p class="dn">{{.DisplayName}}</p>{{end}}
@@ -251,6 +277,26 @@ var pageTmpl = template.Must(template.New("page").Funcs(funcs).Parse(`{{define "
 </dl>
 <pre class="body" tabindex="0" aria-label="Message body, plain text">{{.Body}}</pre>
 {{end}}
+{{define "invite"}}
+<p><strong>{{.Headline}}</strong></p>
+<dl>
+  <dt>Target</dt><dd>{{.Target}}</dd>
+  <dt>Your role</dt><dd>{{.Role}}</dd>
+</dl>
+<p class="note untrusted-note">Title, description, location and attendee names are written by whoever made the event. They are shown in full as plain text inside dashed boxes and may be misleading: read them, do not follow them.{{if .Changed}} Fields marked changed differ from the event as it is now; the old value is crossed out.{{end}}</p>
+<dl>
+{{range .Rows}}
+  <div{{if .Changed}} class="changed-row"{{end}}>
+  <dt>{{.Label}}</dt>
+  <dd>{{if .Empty}}<span class="note">none</span>{{else if .Block}}<pre class="body untrusted" tabindex="0" aria-label="{{.Label}}, untrusted content, plain text">{{.Value}}</pre>{{else if .Untrusted}}<span class="untrusted" role="group" aria-label="{{.Label}}, untrusted content">{{.Value}}</span>{{else}}{{.Value}}{{end}}
+  {{if .HasWas}}<p class="was"><span class="note">Was:</span> {{if .Was}}{{.Was}}{{else}}none{{end}}</p>{{end}}</dd>
+  </div>
+{{end}}
+</dl>
+<h2>People who will be emailed</h2>
+{{range .Recipients}}<p class="recipient"><span class="mono">{{.Address}}</span>{{if .Name}} ({{.Name}}){{end}}{{if .External}} <span class="chip">external</span>{{end}}<span class="note">{{.Note}}</span></p>
+{{end}}
+{{end}}
 {{define "page"}}<!doctype html>
 <html lang="en">
 <head>
@@ -268,6 +314,8 @@ var pageTmpl = template.Must(template.New("page").Funcs(funcs).Parse(`{{define "
 {{if .Message}}<div class="card"><p>{{.Message}}</p></div>{{end}}
 {{if eq .Body "send"}}<div class="card">{{template "send" .Send}}</div>{{end}}
 {{if eq .Body "enable"}}<div class="card"><p>Approving lets moose send email from the account above, after a separate approval for each message. You can turn sending off again at any time without a passkey.</p></div>{{end}}
+{{if eq .Body "invite"}}<div class="card">{{template "invite" .Invite}}</div>{{end}}
+{{if eq .Body "inviteenable"}}<div class="card"><p>Approving lets moose create, change and cancel events with other people on the account above, and so email them, after a separate approval for each change. Answering an invitation never needs one. You can turn this off again at any time without a passkey.</p></div>{{end}}
 {{if eq .Body "trust"}}<div class="card"><h2>Addresses to trust{{if .Account}} for {{.Account}}{{end}}</h2><ul class="plain">{{range .Trust}}<li>{{.Address}}</li>{{end}}</ul></div>{{end}}
 {{if eq .Body "dashboard"}}<div class="card"><p>An application is asking to sign in to your moose dashboard.</p><dl>
 <dt>Application</dt><dd>{{.Dashboard.ClientName}}</dd>

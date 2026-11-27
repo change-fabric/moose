@@ -157,6 +157,20 @@ func (c *Client) CreateEvent(ctx context.Context, calendarID string, in provider
 	return ev, nil
 }
 
+// FindByDedupeKey implements provider.DedupeFinder: a create's dedupe key is the
+// event's id, so the lookup is a read by that id. A missing or deleted event is
+// not found.
+func (c *Client) FindByDedupeKey(ctx context.Context, calendarID, key string) (provider.Event, bool, error) {
+	ev, err := c.GetEvent(ctx, provider.EventRef{CalendarID: calendarID, EventID: eventIDFor(key)})
+	if errors.Is(err, provider.ErrNotFound) {
+		return provider.Event{}, false, nil
+	}
+	if err != nil {
+		return provider.Event{}, false, err
+	}
+	return ev, true, nil
+}
+
 // target resolves what a write is sent to and the etag it must present. An
 // instance, and a one-off or master named directly, is written as named with
 // the caller's version. A series written through one of its occurrences goes

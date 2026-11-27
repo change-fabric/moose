@@ -59,6 +59,7 @@ func newStub(t *testing.T) *stub {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /me/calendars", s.calendars)
 	mux.HandleFunc("GET /me/calendars/{cal}/calendarView", s.calendarView)
+	mux.HandleFunc("GET /me/calendars/{cal}/events", s.byTransactionID)
 	mux.HandleFunc("GET /me/calendars/{cal}/events/{id}", s.event)
 	mux.HandleFunc("POST /me/calendar/getSchedule", s.getSchedule)
 	mux.HandleFunc("POST /me/calendars/{cal}/events", s.create)
@@ -299,6 +300,26 @@ func (s *stub) event(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_ = json.NewEncoder(w).Encode(gEvent(ev, zoneFromPrefer(r.Header.Get("Prefer"))))
+}
+
+// byTransactionID answers $filter=transactionId eq '<id>' over the fake's dedupe index.
+func (s *stub) byTransactionID(w http.ResponseWriter, r *http.Request) {
+	if s.denied(w) {
+		return
+	}
+	f := r.URL.Query().Get("$filter")
+	id := strings.TrimSuffix(strings.TrimPrefix(f, "transactionId eq '"), "'")
+	if id == f || id == "" {
+		s.t.Errorf("unexpected events filter %q", f)
+	}
+	value := []any{}
+	if ev, ok, err := s.p.FindByDedupeKey(r.Context(), r.PathValue("cal"), id); err != nil {
+		s.fail(w, err)
+		return
+	} else if ok {
+		value = append(value, gEvent(ev, zoneFromPrefer(r.Header.Get("Prefer"))))
+	}
+	_ = json.NewEncoder(w).Encode(map[string]any{"value": value})
 }
 
 func (s *stub) getSchedule(w http.ResponseWriter, r *http.Request) {

@@ -215,6 +215,13 @@ func TestValidateCalendar(t *testing.T) {
 	wantErr(t, load(t, on+", base_url: 'ftp://moose.example.org'}\n", nil).ValidateCalendar(), "http(s) origin")
 	wantErr(t, load(t, "env: prod\n"+on+"}\n", map[string]string{"MOOSE_DYNAMO_TABLE": "t"}).ValidateCalendar(), "email.base_url is required")
 	wantErr(t, load(t, "env: prod\n"+on+", base_url: 'http://moose.example.org'}\n", map[string]string{"MOOSE_DYNAMO_TABLE": "t"}).ValidateCalendar(), "https://")
+	// Live invites default off and are their own switch: calendar on does not turn them on.
+	if cfg := load(t, on+"}\n", nil); cfg.Email.Calendar.Invite.Live {
+		t.Error("email.calendar.invite.live must default to false")
+	}
+	if cfg := load(t, "email: {provider: gmail, calendar: {enabled: true, invite: {live: true}}}\n", nil); !cfg.Email.Calendar.Invite.Live {
+		t.Error("email.calendar.invite.live: true was not read")
+	}
 	// Both flags are independent: calendar on does not turn Microsoft on.
 	if cfg := load(t, on+"}\n", nil); cfg.Email.MicrosoftEnabled() {
 		t.Error("calendar.enabled turned Microsoft on")
@@ -293,6 +300,9 @@ func TestShippedLambdaCalendarFlags(t *testing.T) {
 	cal := load("../../deploy/lambda/moose-calendar.yaml")
 	if err := cal.ValidateCalendar(); err != nil {
 		t.Fatalf("deploy/lambda/moose-calendar.yaml: %v", err)
+	}
+	if cal.Email.Calendar.Invite.Live || load("../../deploy/lambda/moose-email.yaml").Email.Calendar.Invite.Live {
+		t.Fatal("committed config turns live calendar invites on; email.calendar.invite.live stays false until docs/acceptance/calendar.md is complete")
 	}
 	em := load("../../deploy/lambda/moose-email.yaml")
 	if cal.Email.MicrosoftEnabled() != em.Email.MicrosoftEnabled() || strings.Join(cal.Email.ProviderList(), ",") != strings.Join(em.Email.ProviderList(), ",") {

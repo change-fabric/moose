@@ -205,11 +205,13 @@ func TestServerCarriesInstructionsAndOnlyTheWriteToolsAreNotReadOnly(t *testing.
 		t.Fatal(err)
 	}
 	want := []string{
-		"calendar_create_event", "calendar_delete_event", "calendar_find_meeting_times", "calendar_free_busy", "calendar_get_event",
-		"calendar_list_accounts", "calendar_list_calendars", "calendar_list_events", "calendar_respond_to_invite", "calendar_update_event",
+		"calendar_account_enable_invites", "calendar_create_event", "calendar_delete_event", "calendar_find_meeting_times", "calendar_free_busy",
+		"calendar_get_event", "calendar_invite_status", "calendar_list_accounts", "calendar_list_calendars", "calendar_list_events",
+		"calendar_respond_to_invite", "calendar_update_event",
 	}
 	writes := map[string]bool{
 		"calendar_create_event": true, "calendar_update_event": true, "calendar_delete_event": true, "calendar_respond_to_invite": true,
+		"calendar_account_enable_invites": true, "calendar_invite_status": true,
 	}
 	var got []string
 	for _, tl := range list.Tools {

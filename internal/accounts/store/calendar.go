@@ -40,6 +40,9 @@ type CalendarRow struct {
 	ProviderEventID string `json:"provider_event_id,omitempty"`
 	// Version is the provider event version the request was approved against.
 	Version string `json:"version,omitempty"`
+	// Reason says why a failed row failed when the cause matters to the caller:
+	// "stale" when the event changed between the approval and the dispatch.
+	Reason string `json:"reason,omitempty"`
 	// Hour is the cap bucket the claim was counted in (HourKey). The hourly cap
 	// is shared with the send ledger: one counter per account.
 	Hour    string    `json:"hour"`
@@ -83,6 +86,10 @@ type CalendarLedger interface {
 	ClaimCalendarRequest(ctx context.Context, row CalendarRow, capLimit int) error
 	// GetCalendarRequest returns the row, or ErrNotFound.
 	GetCalendarRequest(ctx context.Context, requestID string) (CalendarRow, error)
+	// FailCalendarRequest moves the row from `from` to `failed`, records reason,
+	// and releases the row's slot of the hourly cap, atomically. ErrConflict if
+	// the row is not in `from`.
+	FailCalendarRequest(ctx context.Context, requestID, from, reason string, now time.Time) error
 	// AdvanceCalendarRequest moves the row from `from` to `to`, conditional on
 	// the current state (ErrConflict otherwise). A non-empty eventID is recorded.
 	AdvanceCalendarRequest(ctx context.Context, requestID, from, to, eventID string, now time.Time) (CalendarRow, error)
@@ -145,6 +152,37 @@ func (s *impl) AdvanceCalendarRequest(ctx context.Context, requestID, from, to, 
 		}
 		return nil
 	})
+}
+
+func (s *impl) FailCalendarRequest(ctx context.Context, requestID, from, reason string, now time.Time) error {
+	for range 10 {
+		row, it, err := load[CalendarRow](ctx, s.b, calReqPK(requestID), "META")
+		if err != nil {
+			return err
+		}
+		if row.State != from {
+			return fmt.Errorf("%w: calendar row is %s, not %s", ErrConflict, row.State, from)
+		}
+		hour, err := time.Parse("2006010215", row.Hour)
+		if err != nil {
+			return fmt.Errorf("emailstore: calendar ledger hour %q: %w", row.Hour, err)
+		}
+		row.State, row.Reason, row.Updated = CalendarFailed, reason, now.UTC()
+		next := it
+		next.Data, next.Ver = encode(row), it.Ver+1
+		err = s.b.Transact(ctx, []Op{
+			{Kind: OpPut, Item: next, Cond: Cond{Kind: CondVer, Ver: it.Ver}},
+			capOp(row.AccountID, hour, -1, 0),
+		})
+		if i, failed := condIndex(err); failed {
+			if i == 0 {
+				continue
+			}
+			return fmt.Errorf("%w: cap counter for %s was already empty", ErrConflict, row.Hour)
+		}
+		return err
+	}
+	return fmt.Errorf("%w: too much contention on calendar request %s", ErrConflict, requestID)
 }
 
 func (s *impl) ReserveCalendarIdempotency(ctx context.Context, rec CalendarIdempotency) (CalendarIdempotency, bool, error) {

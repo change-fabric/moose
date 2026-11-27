@@ -212,6 +212,12 @@ func checkPreview(p Parsed, pv Preview) *check {
 	if SendKinds(p.Kind) && (pv.AccountStatus != "ok" || pv.SendEnabled == nil || !*pv.SendEnabled) {
 		return &check{"account_not_ready", "the account must be status ok with send enabled"}
 	}
+	if InviteKinds(p.Kind) && (pv.AccountStatus != "ok" || pv.InviteEnabled == nil || !*pv.InviteEnabled || pv.CalendarGranted == nil || !*pv.CalendarGranted) {
+		return &check{"account_not_ready", "the account must be status ok with invites enabled and calendar granted"}
+	}
+	if p.Kind == KindAccountInviteEnable && (pv.CalendarGranted == nil || !*pv.CalendarGranted) {
+		return &check{"account_not_ready", "the account must have granted calendar before invites can be enabled"}
+	}
 	if pv.AccountStatus != "" && pv.AccountStatus != "ok" {
 		return &check{"account_not_ready", "the account must be status ok"}
 	}

@@ -99,6 +99,9 @@ func (d Deps) registerListAccounts(s *sdk.Server) {
 		if err != nil {
 			return resolveError(ctx, err), ListAccountsOut{}, nil
 		}
+		// An invite-enable approval that arrived since the last call is applied, so
+		// an account the owner just approved shows as enabled.
+		picked = d.applyPendingEnables(ctx, picked)
 		out := ListAccountsOut{Accounts: make([]AccountOut, 0, len(picked))}
 		for _, a := range picked {
 			out.Accounts = append(out.Accounts, accountOut(a))

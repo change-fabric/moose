@@ -186,6 +186,12 @@ func (s *stub) events(w http.ResponseWriter, r *http.Request) {
 
 func (s *stub) event(w http.ResponseWriter, r *http.Request) {
 	ev, err := s.p.GetEvent(r.Context(), provider.EventRef{CalendarID: r.PathValue("cal"), EventID: r.PathValue("id")})
+	if errors.Is(err, provider.ErrNotFound) {
+		// A client-supplied event id is the create dedupe key to the fake.
+		if found, ok, ferr := s.p.FindByDedupeKey(r.Context(), r.PathValue("cal"), r.PathValue("id")); ferr == nil && ok {
+			ev, err = found, nil
+		}
+	}
 	if err != nil {
 		s.fail(w, err)
 		return
